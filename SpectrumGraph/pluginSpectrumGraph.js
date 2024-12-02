@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.0.0b4 by AAD
+    Spectrum Graph v1.0.0b5 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 */
 
@@ -19,18 +19,21 @@ const WebserverPath = currentURL.pathname.replace(/setup/g, '');
 const WebserverPORT = currentURL.port || (currentURL.protocol === 'https:' ? '443' : '80');
 const protocol = currentURL.protocol === 'https:' ? 'wss:' : 'ws:';
 const WEBSOCKET_URL = `${protocol}//${WebserverURL}:${WebserverPORT}${WebserverPath}data_plugins`;
-let wsSendSocket;
 
-// Observe element
+// const variables
 const dataFrequencyElement = document.getElementById('data-frequency');
-let dataFrequencyValue;
-let isGraphOpen = false;
-
 const xOffset = 30;
 const drawGraphDelay = 10;
+
+// let variables
+let dataFrequencyValue;
+let isGraphOpen = false;
+let isSpectrumOn = false;
 let ipAddress = '0';
 let sigArray = [];
+let wsSendSocket;
 
+// WebSocket to send request and receive response
 async function setupSendSocket() {
     if (!wsSendSocket || wsSendSocket.readyState === WebSocket.CLOSED) {
         try {
@@ -39,32 +42,31 @@ async function setupSendSocket() {
                 console.log(`Spectrum Graph connected WebSocket`);
 
                 wsSendSocket.onmessage = function(event) {
-                    // Parse the incoming JSON data
+                    // Parse incoming JSON data
                     const data = JSON.parse(event.data);
                     
                     if (data.type === 'spectrum-graph') {
-                        //console.log(`Spectrum Graph:`, data.value);
                         console.log(`Spectrum Graph command sent`);
                     }
 
                     // Handle 'sigArray' data
                     if (data.type === 'sigArray') {
-                        //console.log(`Spectrum Graph: Received sigArray:`, data.value);
+                        console.log(`Spectrum Graph received sigArray.`);
                         sigArray = data.value;
                         if (sigArray.length > 0) {
-                            //console.log(`Spectrum Graph: Create canvas`);
-                            //renderCanvas(sigArray);
                             setTimeout(drawGraph, drawGraphDelay);
                         }
 
+                        /*
                         if (Array.isArray(data.value)) {
-                            // Process sigArray (for example, logging or displaying the values)
+                            // Process sigArray
                             data.value.forEach(item => {
-                                //console.log(`freq: ${item.freq}, sig: ${item.sig}`);
+                                console.log(`freq: ${item.freq}, sig: ${item.sig}`);
                             });
                         } else {
-                            console.error('Expected an array for sigArray, but received:', data.value);
+                            console.error('Expected array for sigArray, but received:', data.value);
                         }
+                        */
                     }
                 };
             };
@@ -80,7 +82,8 @@ async function setupSendSocket() {
     }
 }
 
-function ScannerButtons() {
+// Create scan button to refresh graph
+function ScanButton() {
     // Remove any existing instances of button
     const existingButtons = document.querySelectorAll('.rectangular-spectrum-button');
     existingButtons.forEach(button => button.remove());
@@ -88,7 +91,7 @@ function ScannerButtons() {
     // Create new button for controlling spectrum
     const spectrumButton = document.createElement('button');
     spectrumButton.id = 'spectrum-scan-button';
-    spectrumButton.setAttribute('aria-label', 'Spectrum Scan');
+    spectrumButton.setAttribute('aria-label', 'Spectrum Graph Scan');
     spectrumButton.classList.add('rectangular-spectrum-button');
     spectrumButton.innerHTML = '<i class="fa-solid fa-magnifying-glass"></i>';
 
@@ -143,7 +146,6 @@ function ScannerButtons() {
     styleElement.innerHTML = rectangularButtonStyle;
     document.head.appendChild(styleElement);
 }
-
 // WebSocket and scanner button initialisation
 setTimeout(setupSendSocket, 200);
 
@@ -154,12 +156,40 @@ fetch('https://api.ipify.org?format=json')
     })
     .catch((error) => console.error('Error fetching IP:', error));
 
+// Fetch any available data on page load
+async function initializeGraph() {
+    try {
+        // Fetch the initial data from /api
+        const response = await fetch('/api');
+        if (!response.ok) {
+            throw new Error(`Spectrum Graph failed to fetch data: ${response.status}`);
+        }
 
+        const data = await response.json();
 
-let isSpectrumOn = false;
+        // Check if `sd` exists
+        if (data.sd && data.sd.trim() !== '') {
+            console.log(`Spectrum Graph found data available on page load.`);
+            if (data.sd.length > 0) {
+                // Split the response into pairs and process each one (as it normally does server-side)
+                sigArray = data.sd.split(',').map(pair => {
+                    const [freq, sig] = pair.split('=');
+                    return { freq: (freq / 1000).toFixed(2), sig: parseFloat(sig).toFixed(1) };
+                });
+            }
+        } else {
+            console.log('Spectrum Graph found no data available at page load.');
+        }
+    } catch (error) {
+        console.error('Spectrum Graph error during graph initialisation:', error);
+    }
+}
 
+// Call function on page load
+window.addEventListener('load', initializeGraph);
+
+// Create Spectrum Graph button
 const SPECTRUM_BUTTON_NAME = 'SPECTRUM';
-
 const aSpectrumCss = `
 #spectrum-graph-button {
     border-radius: 0px;
@@ -171,7 +201,6 @@ const aSpectrumCss = `
     right: 0px;
 }
 `
-
 $("<style>")
     .prop("type", "text/css")
     .html(aSpectrumCss)
@@ -214,7 +243,7 @@ function createDefaultButtonWrapper() {
         if (useButtonSpacingBetweenCanvas) wrapperElement.append(document.createElement('br'));
         return buttonWrapper;
     } else {
-        console.error('Standard location not found. Unable to add button.');
+        console.error('Spectrum Graph: Standard button location not found. Unable to add button.');
         return null;
     }
 }
@@ -228,7 +257,7 @@ $(window).on('load', function() {
 });
 
 
-// Display signal canvas
+// Display signal canvas (default)
 function displaySignalCanvas() {
     const sdrCanvas = document.getElementById('sdr-graph');
     if (sdrCanvas) {
@@ -257,12 +286,14 @@ function displaySignalCanvas() {
     }
 }
 
-// Display signal output
-function displaySignalOutput() {
+// Display SDR graph output
+function displaySdrGraph() {
     const sdrCanvas = document.getElementById('sdr-graph');
     if (sdrCanvas) {
         sdrCanvas.style.display = 'block';
         isGraphOpen = true;
+        canvas.style.border = "1px solid var(--color-3)";
+        setTimeout(drawGraph, drawGraphDelay);
     }
     const loggingCanvas = document.getElementById('logging-canvas');
     if (loggingCanvas) {
@@ -286,12 +317,12 @@ function displaySignalOutput() {
     if (signalCanvas) {
         signalCanvas.style.display = 'none';
     }
-    ScannerButtons();
+    ScanButton();
 }
 
 
-// Adjust dataCanvas height based on scrollContainer height
-function adjustDataCanvasHeight() {
+// Adjust dataCanvas height based on window height
+function adjustSdrGraphCanvasHeight() {
   if (window.innerHeight < 860 && window.innerWidth > 480) {
     canvas.height = 120;
   } else {
@@ -318,8 +349,8 @@ function toggleSpectrum() {
         SpectrumButton.classList.remove('bg-color-2');
         SpectrumButton.classList.add('bg-color-4');
 
-        // Perform actions when spectrum is on
-        displaySignalOutput();
+        // Perform when spectrum is on
+        displaySdrGraph();
 
         // Hide antenna image
         if (antennaImage) {
@@ -327,9 +358,9 @@ function toggleSpectrum() {
         }
 
         // Set initial height with delay
-        setTimeout(adjustDataCanvasHeight, 400);
+        setTimeout(adjustSdrGraphCanvasHeight, 400);
         // Adjust height dynamically on window resize
-        window.addEventListener('resize', adjustDataCanvasHeight);
+        window.addEventListener('resize', adjustSdrGraphCanvasHeight);
     } else {
         // Update button appearance
         SpectrumButton.classList.remove('bg-color-4');
@@ -351,7 +382,7 @@ function toggleSpectrum() {
 }
 
 
-
+// Observe any frequency changes
 function observeFrequency() {
   if (dataFrequencyElement) {
     // Create MutationObserver
@@ -369,18 +400,19 @@ function observeFrequency() {
     
     observer.observe(dataFrequencyElement, config);
   } else {
-    console.log('#data-frequency missing');
+    console.log('Spectrum Graph: #data-frequency missing');
   }
 }
 observeFrequency();
 
+// Tooltip and frequency highlighter
 function initializeCanvasInteractions() {
   const canvas = document.getElementById('sdr-graph');
   const tooltip = document.createElement('div');
 
   const colorBackground = getComputedStyle(document.documentElement).getPropertyValue('--color-1-transparent').trim();
   
-  // Style the tooltip
+  // Style tooltip
   tooltip.style.position = 'absolute';
   tooltip.style.background = 'var(--color-5-transparent)';
   tooltip.style.color = '#fefeff';
@@ -392,7 +424,7 @@ function initializeCanvasInteractions() {
   tooltip.style.zIndex = '10';
   document.body.appendChild(tooltip);
 
-  // Scaling factors and bounds (update these after drawing the graph)
+  // Scaling factors and bounds
   let xScale, minFreq, freqRange, yScale;
 
   function updateTooltip(event) {
@@ -405,7 +437,7 @@ function initializeCanvasInteractions() {
     const mouseX = event.clientX - rect.left;
     const mouseY = event.clientY - rect.top;
 
-    // Calculate the frequency
+    // Calculate frequency
     const freq = minFreq + (mouseX - xOffset) / xScale;
 
     if (freq < minFreq || freq > minFreq + freqRange) {
@@ -413,7 +445,7 @@ function initializeCanvasInteractions() {
       return;
     }
 
-    // Find the closest point in sigArray to the frequency under the cursor
+    // Find closest point in sigArray to the frequency under the cursor
     let closestPoint = null;
     let minDistance = Infinity;
     for (let point of sigArray) {
@@ -427,11 +459,11 @@ function initializeCanvasInteractions() {
     if (closestPoint) {
       const signalValue = Number(closestPoint.sig);
 
-      // Calculate the position of the circle
+      // Calculate position of circle
       const circleX = xOffset + (closestPoint.freq - minFreq) * xScale;
       const circleY = canvas.height - (signalValue * yScale) - 20;
 
-      // Draw the circle at the tip of the signal
+      // Draw circle at tip of the signal
       ctx.beginPath();
       ctx.arc(circleX, circleY, 5, 0, 2 * Math.PI);
       ctx.fillStyle = 'var(--color-5-transparent)';
@@ -444,7 +476,7 @@ function initializeCanvasInteractions() {
       const tooltipX = (xOffset + 10) + (closestPoint.freq - minFreq) * xScale;
       const tooltipY = canvas.height - 20 - signalValue * yScale;
 
-      // Position and display the tooltip
+      // Position and display tooltip
       tooltip.style.left = `${rect.left + tooltipX}px`;
       tooltip.style.top = `${rect.top + tooltipY - 30}px`; // Position above the graph point
       tooltip.textContent = ` ${freq.toFixed(1)} MHz, ${signalValue.toFixed(0)} dBf `;
@@ -456,28 +488,30 @@ function initializeCanvasInteractions() {
     const rect = canvas.getBoundingClientRect();
     const mouseX = event.clientX - rect.left;
 
-    // Calculate the frequency
+    // Calculate frequency
     const freq = minFreq + (mouseX - xOffset) / xScale;
 
     if (freq < minFreq || freq > minFreq + freqRange) return;
 
-    // Send the WebSocket command
+    // Send WebSocket command
     const command = `T${Math.round(freq.toFixed(1) * 1000)}`;
     console.log(`Spectrum Graph: Sending command "${command}"`);
     socket.send(command);
     setTimeout(() => {
         setTimeout(drawGraph, drawGraphDelay);
+        /*
         const message = JSON.stringify({
             type: 'spectrum-graph',
             value: {
                 status: 'scan',
             }
         });
+        if (wsSendSocket) wsSendSocket.send(message);
+        */
         // Run again to compensate for high pings
         setTimeout(() => {
             setTimeout(drawGraph, drawGraphDelay);
         }, 800);
-        //if (wsSendSocket) wsSendSocket.send(message);
     }, 200);
   }
 
@@ -486,7 +520,7 @@ function initializeCanvasInteractions() {
   canvas.addEventListener('mouseleave', () => (tooltip.style.visibility = 'hidden'));
   canvas.addEventListener('click', handleClick);
 
-  // Attach this function to be called after the graph is drawn
+  // Called after graph is drawn
   return function updateBounds(newXScale, newMinFreq, newFreqRange, newYScale) {
     xScale = newXScale;
     minFreq = newMinFreq;
@@ -496,8 +530,7 @@ function initializeCanvasInteractions() {
 }
 
 
-
-// Select the container where the canvas should be added
+// Select container where canvas should be added
 const container = document.querySelector('.canvas-container');
 
 // Create a new canvas element
@@ -513,15 +546,13 @@ if (window.innerHeight < 860 && window.innerWidth > 480) {
 }
 setTimeout(() => {
     canvas.style.border = "1px solid var(--color-3)";
-}, 800);
-
-
+}, 10000);
 
 // Append the canvas to the container
 container.appendChild(canvas);
 
 
-
+// Draw graph
 function drawGraph() {
   dataFrequencyValue = dataFrequencyElement.textContent;
 
@@ -539,8 +570,8 @@ function drawGraph() {
   }
 
   // Determine max signal value dynamically
-  //const maxSig = Math.max(...sigArray.map(d => d.sig));
-  const maxSig = 80;
+  //const maxSig = Math.max(...sigArray.map(d => d.sig)); // Dynamic vertical graph
+  const maxSig = 80; // Fixed vertical graph
   const maxFreq = Math.max(...sigArray.map(d => d.freq));
   const minFreq = Math.min(...sigArray.map(d => d.freq));
 
@@ -602,13 +633,13 @@ function drawGraph() {
     }
   }
 
-  // Draw signal labels (faint, but not as faint as grid lines)
+  // Draw signal labels
   const sigLabelStep = maxSig / 8; // Increase the number of labels
   let labels = [];
   for (let sig = 0; sig <= maxSig; sig += sigLabelStep) {
     const y = height - 20 - sig * yScale;
     if (sig) ctx.fillText(sig.toFixed(0), (xOffset - 20), y + 3);
-    labels.push(sig); // Store the labeled values
+    labels.push(sig); // Store labeled values
   }
 
   // Draw dotted grid lines (horizontal)
@@ -626,7 +657,7 @@ function drawGraph() {
   // Draw all lines in one stroke call to prevent overlaps
   ctx.stroke();
 
-  // Fill the graph area
+  // Fill graph area
   const gradient = ctx.createLinearGradient(0, height - 20, 0, 0);
 
   // Add colour stops
@@ -635,7 +666,7 @@ function drawGraph() {
   gradient.addColorStop(0.5, "#8CD500");
   gradient.addColorStop(0.75, "#F04100");
 
-  // Set the fill style and draw a rectangle
+  // Set fill style and draw a rectangle
   ctx.fillStyle = gradient;
 
   // Draw graph with smoothed points
@@ -643,7 +674,7 @@ function drawGraph() {
   ctx.beginPath();
   ctx.moveTo(xOffset, height - 20); // Start from bottom-left corner
 
-  // Draw the graph line
+  // Draw graph line
   sigArray.forEach((point, index) => {
     if (point.sig < 0) point.sig = 0;
     const x = xOffset + (point.freq - minFreq) * xScale;
@@ -690,13 +721,13 @@ function drawGraph() {
     }
   }
 
-  // Draw the graph line
+  // Draw graph line
   sigArray.forEach((point, index) => {
     if (point.sig < 0) point.sig = 0;
     const x = xOffset + (point.freq - minFreq) * xScale;
     const y = height - 20 - point.sig * yScale;
 
-    // Draw the current frequency line
+    // Draw current frequency line
     if (Number(dataFrequencyValue) === Number(point.freq)) {
       // Calculate the x-coordinates for the white vertical line
       let highlightBandwidthLow = 0.1;
@@ -707,11 +738,11 @@ function drawGraph() {
       const leftX = xOffset + (highlightFreq - highlightBandwidthLow - minFreq) * xScale; // 0.1 MHz to the left
       const rightX = xOffset + (highlightFreq + highlightBandwidthHigh - minFreq) * xScale; // 0.1 MHz to the right
 
-      // Set the style for the white line
+      // Set style for white line
       ctx.fillStyle = 'rgba(224, 224, 240, 0.4)';
 
-      // Draw the vertical highlight region
-      ctx.fillRect(leftX, 0, rightX - leftX, height - 20); // From top to bottom of the graph
+      // Draw vertical highlight region
+      ctx.fillRect(leftX, 0, rightX - leftX, height - 20); // From top to bottom of graph
     }
   });
 
