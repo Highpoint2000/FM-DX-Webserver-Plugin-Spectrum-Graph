@@ -1,6 +1,6 @@
 # Spectrum Graph plugin for FM-DX Webserver
 
-This plugin scans the FM radio in under 1.5 seconds, displayed in a spectrum window.
+This plugin scans the FM radio band in under 1.5 seconds, then displayed in a spectrum window.
 
 ## Requires FM-DX Webserver v1.3.2 with the following modification
 
