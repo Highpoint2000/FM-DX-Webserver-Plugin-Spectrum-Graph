@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.1.0b1 by AAD
+    Spectrum Graph v1.0.0b2 by AAD
     Server-side code
 */
 
@@ -263,6 +263,13 @@ function startScan(command) {
     (async () => {
         try {
             let sdValue = await waitForSdValue();
+
+            // Remove trailing comma and space in TEF radio firmware
+            if (sdValue && sdValue.endsWith(', ')) {
+                sdValue = sdValue.slice(0, -2);
+            }
+            
+            // console.log(sdValue);
 
             logInfo(`Spectrum Graph: Spectrum scan (${(tuningLowerLimitScan / 1000)} - ${(tuningUpperLimitScan / 1000)} MHz) complete in ${Date.now() - startTime}ms.`);
 

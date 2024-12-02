@@ -1,11 +1,15 @@
 /*
-    Spectrum Graph v1.0.0b1 by AAD
+    Spectrum Graph v1.0.0b2 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 */
 
 (() => {
 
-const useButtonSpacingBetweenCanvas = true;
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+const useButtonSpacingBetweenCanvas = true; // Other plugins are likely to override this
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Create the WebSocket connection
 const currentURL = new URL(window.location.href);
@@ -640,6 +644,8 @@ function drawGraph() {
 
   // Draw the graph line
   sigArray.forEach((point, index) => {
+    if (point.freq > 0) {
+      console.log(point.freq);
     if (point.sig < 0) point.sig = 0;
     const x = xOffset + (point.freq - minFreq) * xScale;
     const y = height - 20 - point.sig * yScale;
@@ -647,6 +653,7 @@ function drawGraph() {
       ctx.lineTo(x, y);
     } else {
       ctx.lineTo(x, y);
+    }
     }
   });
 
