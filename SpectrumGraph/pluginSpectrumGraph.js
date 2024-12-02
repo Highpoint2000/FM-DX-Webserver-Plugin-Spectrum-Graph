@@ -125,7 +125,7 @@ function ScannerButtons() {
             position: absolute;
             top: 8px;
             right: 8px;
-            z-index: 999;
+            z-index: 10;
             border-radius: 5px;
             padding: 5px 10px;
             cursor: pointer;
