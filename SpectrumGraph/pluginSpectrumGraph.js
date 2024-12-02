@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.0.0b3 by AAD
+    Spectrum Graph v1.0.0b4 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 */
 
@@ -297,7 +297,7 @@ function adjustDataCanvasHeight() {
   } else {
     canvas.height = 175;
   }
-  setTimeout(drawGraph, drawGraphDelay);
+  drawGraph();
 }
 
 
