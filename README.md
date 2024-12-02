@@ -21,6 +21,11 @@ This plugin scans the FM radio band in under 1.5 seconds, then displayed in a sp
 
 #### BETA version
 
+v1.0.0b5
+--------
+* Create graph on page load if data exists
+* Minor fixes
+
 v1.0.0b4
 --------
 * Added configurable graph smoothing option
