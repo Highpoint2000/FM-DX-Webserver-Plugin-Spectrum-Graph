@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.0.0b2 by AAD
+    Spectrum Graph v1.0.0b3 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 */
 
@@ -7,7 +7,8 @@
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const useButtonSpacingBetweenCanvas = true; // Other plugins are likely to override this
+const enableSmoothing = true;                 // Recommended if using TEF module
+const useButtonSpacingBetweenCanvas = true;   // Other plugins are likely to override this
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -654,12 +655,14 @@ function drawGraph() {
     }
   });
 
-  ctx.fillStyle = gradient;
-  ctx.strokeStyle = gradient;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = 3; // Smoothing
-  ctx.stroke();
+  if (enableSmoothing) {
+    ctx.fillStyle = gradient;
+    ctx.strokeStyle = gradient;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3; // Smoothing
+    ctx.stroke();
+  }
 
   // Restore to not affect the rest of the graph
   ctx.lineCap = 'butt';
