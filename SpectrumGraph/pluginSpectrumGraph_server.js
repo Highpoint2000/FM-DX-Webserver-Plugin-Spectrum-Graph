@@ -21,7 +21,7 @@ let sigArray = [];
 
 //////////////////////////////
 
-let bandwidth = 3; // MHz
+let bandwidth = 0; // MHz
 
 //////////////////////////////
 
