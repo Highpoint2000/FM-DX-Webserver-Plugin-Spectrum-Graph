@@ -5,7 +5,7 @@ This plugin scans the FM radio band in under 1.5 seconds, then displayed in a sp
 ## Requirements:
 
 - FM-DX Webserver v1.3.2
-- TEF radio with latest **TEF6686_ESP32** beta firmware or
+- TEF radio with latest **TEF6686_ESP32** beta firmware (v2.11.8) or
 - TEF module with latest **FM-DX-Tuner** firmware
 - Modified **datahandler.js** file
 
