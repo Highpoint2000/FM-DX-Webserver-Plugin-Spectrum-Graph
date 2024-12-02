@@ -644,8 +644,6 @@ function drawGraph() {
 
   // Draw the graph line
   sigArray.forEach((point, index) => {
-    if (point.freq > 0) {
-      console.log(point.freq);
     if (point.sig < 0) point.sig = 0;
     const x = xOffset + (point.freq - minFreq) * xScale;
     const y = height - 20 - point.sig * yScale;
@@ -653,7 +651,6 @@ function drawGraph() {
       ctx.lineTo(x, y);
     } else {
       ctx.lineTo(x, y);
-    }
     }
   });
 
