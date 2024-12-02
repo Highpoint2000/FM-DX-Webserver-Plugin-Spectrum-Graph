@@ -21,6 +21,11 @@ This plugin scans the FM radio band in under 1.5 seconds, then displayed in a sp
 
 #### BETA version
 
+v1.0.0b4
+--------
+* Added configurable graph smoothing option
+* Fixed slight flicker that might occur
+
 v1.0.0b2
 --------
 * Graph output fix for TEF radio firmware
