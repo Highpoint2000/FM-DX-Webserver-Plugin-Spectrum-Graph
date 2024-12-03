@@ -18,8 +18,14 @@ This plugin scans the FM radio band in under 1.5 seconds, then displayed in a sp
 * Transfer `SpectrumGraph` folder, and `SpectrumGraph.js` to FM-DX Webserver `plugins` folder
 * Restart FM-DX Webserver if required
 * Login to Adminstrator Panel and enable plugin
+* Server-side configuration is stored in `SpectrumGraph.json`
 
-#### BETA version
+### BETA version
+
+v1.0.0b6
+--------
+* Added configuration file
+* Visual improvements and fixes
 
 v1.0.0b5
 --------
