@@ -34,11 +34,11 @@ const configFolderPath = path.join(rootDir, 'plugins_configs');
 const configFilePath = path.join(configFolderPath, 'SpectrumGraph.json');
 
 // Default configuration
-let bandwidth = 0; // MHz
+let tuningRange = 0; // MHz
 let tuningStepSize = 100; // kHz
 
 const defaultConfig = {
-    bandwidth: 0,
+    tuningRange: 0,
     tuningStepSize: 100
 };
 
@@ -55,13 +55,13 @@ function checkConfigFile() {
         logInfo(`${pluginName}: Creating default SpectrumGraph.json file...`);
         // Create the JSON file with default content and custom formatting
         const defaultConfig = {
-            bandwidth: ['0'],
+            tuningRange: ['0'],
             tuningStepSize: ['100']
         };
 
         // Manually format the JSON with the desired structure
         const formattedConfig = `{
-    "bandwidth": ${defaultConfig.bandwidth.map(value => `${value}`).join(', ')},
+    "tuningRange": ${defaultConfig.tuningRange.map(value => `${value}`).join(', ')},
     "tuningStepSize": ${defaultConfig.tuningStepSize.map(value => `${value}`).join(', ')}
 }`;
 
@@ -81,7 +81,7 @@ function loadConfigFile(isReloaded) {
             const config = JSON.parse(configContent);
 
             // Ensure variables are numbers, else fallback to defaults
-            bandwidth = !isNaN(Number(config.bandwidth)) ? Number(config.bandwidth) : defaultConfig.bandwidth;
+            tuningRange = !isNaN(Number(config.tuningRange)) ? Number(config.tuningRange) : defaultConfig.tuningRange;
             tuningStepSize = !isNaN(Number(config.tuningStepSize)) ? Number(config.tuningStepSize) : defaultConfig.tuningStepSize;
 
             logInfo(`${pluginName}: Configuration ${isReloaded || ''}loaded successfully.`);
@@ -121,10 +121,10 @@ function watchConfigFile() {
 function initConfigSystem() {
     loadConfigFile(); // Load configuration values initially
     watchConfigFile(); // Start watching for changes
-    if (bandwidth) {
-      logInfo(`${pluginName} configuration: Bandwidth: ${bandwidth} MHz, Tuning Steps: ${tuningStepSize} kHz`);
+    if (tuningRange) {
+      logInfo(`${pluginName} configuration: Tuning Range: ${tuningRange} MHz, Tuning Steps: ${tuningStepSize} kHz`);
     } else {
-      logInfo(`${pluginName} configuration: Bandwidth: Unlimited MHz, Tuning Steps: ${tuningStepSize} kHz`);
+      logInfo(`${pluginName} configuration: Tuning Range: Unlimited MHz, Tuning Steps: ${tuningStepSize} kHz`);
     }
 }
 
@@ -315,9 +315,9 @@ function startScan(command) {
       tuningLowerLimitScan = Math.round(tuningLowerLimit * 1000);
       tuningUpperLimitScan = Math.round(tuningUpperLimit * 1000);
 
-      if (bandwidth) {
-          tuningLowerLimitScan = (currentFrequency * 1000) - (bandwidth * 1000);
-          tuningUpperLimitScan = (currentFrequency * 1000) + (bandwidth * 1000);
+      if (tuningRange) {
+          tuningLowerLimitScan = (currentFrequency * 1000) - (tuningRange * 1000);
+          tuningUpperLimitScan = (currentFrequency * 1000) + (tuningRange * 1000);
       }
 
       if (tuningUpperLimitScan > (tuningUpperLimit * 1000)) tuningUpperLimitScan = (tuningUpperLimit * 1000);
@@ -328,10 +328,10 @@ function startScan(command) {
       if (tuningLowerLimitScan > 27000 && tuningLowerLimitScan < 64000) tuningLowerLimitScan = 64000;
       if (tuningLowerLimitScan < 64000) tuningLowerLimitScan = 64000; // Doesn't like scanning HF frequencies
 
-      // Keep bandwidth consistent for restricted bandwidth setting
-      if (bandwidth) {
-          tuningLowerLimitOffset = (bandwidth * 1000) - (tuningUpperLimitScan - (currentFrequency * 1000));
-          tuningUpperLimitOffset = (tuningLowerLimitScan - (currentFrequency * 1000)) + (bandwidth * 1000);
+      // Keep tuning range consistent for restricted tuning range setting
+      if (tuningRange) {
+          tuningLowerLimitOffset = (tuningRange * 1000) - (tuningUpperLimitScan - (currentFrequency * 1000));
+          tuningUpperLimitOffset = (tuningLowerLimitScan - (currentFrequency * 1000)) + (tuningRange * 1000);
       } else {
           tuningLowerLimitOffset = 0;
           tuningUpperLimitOffset = 0;
