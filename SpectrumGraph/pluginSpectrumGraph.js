@@ -1,16 +1,17 @@
 /*
-    Spectrum Graph v1.0.0b5 by AAD
+    Spectrum Graph v1.0.0b6 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 */
 
 (() => {
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 const enableSmoothing = true;                 // Recommended if using TEF module
-const useButtonSpacingBetweenCanvas = true;   // Other plugins are likely to override this
+const borderlessTheme = true;                 // Background and text colours match FM-DX Webserver theme
+const useButtonSpacingBetweenCanvas = true;   // Other plugins are likely to override this if set to false
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Create the WebSocket connection
 const currentURL = new URL(window.location.href);
@@ -24,6 +25,8 @@ const WEBSOCKET_URL = `${protocol}//${WebserverURL}:${WebserverPORT}${WebserverP
 const dataFrequencyElement = document.getElementById('data-frequency');
 const xOffset = 30;
 const drawGraphDelay = 10;
+const canvasHeightSmall = 120;
+const canvasHeightLarge = 175;
 
 // let variables
 let dataFrequencyValue;
@@ -127,8 +130,9 @@ function ScanButton() {
         .rectangular-spectrum-button {
             position: absolute;
             top: 8px;
-            right: 8px;
+            right: 16px;
             z-index: 10;
+            opacity: 0.8;
             border-radius: 5px;
             padding: 5px 10px;
             cursor: pointer;
@@ -171,6 +175,12 @@ async function initializeGraph() {
         if (data.sd && data.sd.trim() !== '') {
             console.log(`Spectrum Graph found data available on page load.`);
             if (data.sd.length > 0) {
+
+                // Remove trailing comma and space in TEF radio firmware
+                if (data.sd && data.sd.endsWith(', ')) {
+                    data.sd = data.sd.slice(0, -2);
+                }
+
                 // Split the response into pairs and process each one (as it normally does server-side)
                 sigArray = data.sd.split(',').map(pair => {
                     const [freq, sig] = pair.split('=');
@@ -292,7 +302,7 @@ function displaySdrGraph() {
     if (sdrCanvas) {
         sdrCanvas.style.display = 'block';
         isGraphOpen = true;
-        canvas.style.border = "1px solid var(--color-3)";
+        if (!borderlessTheme) canvas.style.border = "1px solid var(--color-3)";
         setTimeout(drawGraph, drawGraphDelay);
     }
     const loggingCanvas = document.getElementById('logging-canvas');
@@ -324,9 +334,9 @@ function displaySdrGraph() {
 // Adjust dataCanvas height based on window height
 function adjustSdrGraphCanvasHeight() {
   if (window.innerHeight < 860 && window.innerWidth > 480) {
-    canvas.height = 120;
+    canvas.height = canvasHeightSmall;
   } else {
-    canvas.height = 175;
+    canvas.height = canvasHeightLarge;
   }
   drawGraph();
 }
@@ -408,6 +418,7 @@ observeFrequency();
 // Tooltip and frequency highlighter
 function initializeCanvasInteractions() {
   const canvas = document.getElementById('sdr-graph');
+  const canvasContainer = document.querySelector('.canvas-container');
   const tooltip = document.createElement('div');
 
   const colorBackground = getComputedStyle(document.documentElement).getPropertyValue('--color-1-transparent').trim();
@@ -423,6 +434,9 @@ function initializeCanvasInteractions() {
   tooltip.style.visibility = 'hidden';
   tooltip.style.zIndex = '10';
   document.body.appendChild(tooltip);
+
+  // Insert tooltip after canvas-container
+  canvasContainer.insertAdjacentElement('afterend', tooltip);
 
   // Scaling factors and bounds
   let xScale, minFreq, freqRange, yScale;
@@ -517,7 +531,14 @@ function initializeCanvasInteractions() {
 
   // Add event listeners
   canvas.addEventListener('mousemove', updateTooltip);
-  canvas.addEventListener('mouseleave', () => (tooltip.style.visibility = 'hidden'));
+  canvas.addEventListener('mouseleave', () => {
+      tooltip.style.visibility = 'hidden';
+      setTimeout(() => {
+          const ctx = canvas.getContext('2d');
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          drawGraph();
+      }, 800);
+  });
   canvas.addEventListener('click', handleClick);
 
   // Called after graph is drawn
@@ -538,18 +559,34 @@ const canvas = document.createElement('canvas');
 
 // Set canvas attributes
 canvas.id = 'sdr-graph';
-canvas.width = 1180;
+canvas.width = 1170;
 if (window.innerHeight < 860 && window.innerWidth > 480) {
-  canvas.height = 120;
+  canvas.height = canvasHeightSmall;
 } else {
-  canvas.height = 175;
+  canvas.height = canvasHeightLarge;
 }
-setTimeout(() => {
-    canvas.style.border = "1px solid var(--color-3)";
-}, 10000);
 
 // Append the canvas to the container
 container.appendChild(canvas);
+
+
+// Get background colour
+function getBackgroundColor(element) {
+    return window.getComputedStyle(element).backgroundColor;
+}
+const wrapperOuter = document.getElementById('wrapper-outer');
+let currentBackgroundColor = getBackgroundColor(wrapperOuter);
+const observer = new MutationObserver(() => {
+    const newColor = getBackgroundColor(wrapperOuter);
+    if (newColor !== currentBackgroundColor) {
+        setTimeout(() => {
+            console.log(`Spectrum Graph new background colour.`);
+            setTimeout(drawGraph, drawGraphDelay);
+        }, 400);
+    }
+});
+const config = { attributes: true };
+observer.observe(wrapperOuter, config);
 
 
 // Draw graph
@@ -599,24 +636,32 @@ function drawGraph() {
   const xScale = (width - 30) / freqRange;
   const yScale = (height - 40) / maxSig;
 
+  const colorText = getComputedStyle(document.documentElement).getPropertyValue('--color-5').trim();
   const colorBackground = getComputedStyle(document.documentElement).getPropertyValue('--color-1-transparent').trim();
 
   // Draw background
-  ctx.fillStyle = colorBackground; // Background
-  ctx.fillRect(0, 0, width, height);
+  if (!borderlessTheme) {
+    ctx.fillStyle = colorBackground; // Background
+    ctx.fillRect(0, 0, width, height);
+  }
 
   // Reset line style for grid lines and graph
   ctx.setLineDash([]);
 
   // Draw frequency labels and tick marks
-  ctx.font = `12px Helvetica, Calibri, Arial, Monospace, sans-serif`;
-  ctx.fillStyle = '#f0f0fe';
+  if (borderlessTheme) {
+    ctx.fillStyle = colorText;
+    ctx.font = `12px Titillium Web, Helvetica, Calibri, Arial, Monospace, sans-serif`;
+  } else {
+    ctx.fillStyle = '#f0f0fe';
+    ctx.font = `12px Helvetica, Calibri, Arial, Monospace, sans-serif`;
+  }
   ctx.strokeStyle = '#ccc';
   for (let freq = minFreq; freq <= maxFreq; freq += freqStep) {
     const x = xOffset + (freq - minFreq) * xScale;
     if (freq !== minFreq && freq !== maxFreq) ctx.fillText(freq.toFixed(1), x - 10, height - 5);
 
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
     ctx.lineWidth = 1;
     ctx.setLineDash([]);
 
@@ -634,7 +679,12 @@ function drawGraph() {
   }
 
   // Draw signal labels
-  const sigLabelStep = maxSig / 8; // Increase the number of labels
+  let sigLabelStep;
+  if (canvas.height === canvasHeightLarge) {
+    sigLabelStep = maxSig / 8; // Increase the number of labels
+  } else {
+    sigLabelStep = maxSig / 4;
+  }
   let labels = [];
   for (let sig = 0; sig <= maxSig; sig += sigLabelStep) {
     const y = height - 20 - sig * yScale;
@@ -650,12 +700,28 @@ function drawGraph() {
 
   for (let sig of labels) {
     const y = (height - 20 - sig * yScale) - 1;
-    ctx.moveTo(xOffset - 2, y);
+    ctx.moveTo(xOffset, y);
     ctx.lineTo(width, y);
   }
 
   // Draw all lines in one stroke call to prevent overlaps
   ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([]);
+
+  for (let sig = 0; sig <= maxSig; sig += sigLabelStep) {
+    const y = height - 20 - sig * yScale; // Calculate vertical position
+
+    // Draw tick mark only if it's not the first or last value
+    if (sig !== 0) {
+      ctx.beginPath();
+      ctx.moveTo(xOffset - 2, y - 1); // Start just to the left of the axis
+      ctx.lineTo(xOffset, y - 1); // Extend slightly outwards
+      ctx.stroke();
+    }
+  }
 
   // Fill graph area
   const gradient = ctx.createLinearGradient(0, height - 20, 0, 0);
@@ -680,9 +746,9 @@ function drawGraph() {
     const x = xOffset + (point.freq - minFreq) * xScale;
     const y = height - 20 - point.sig * yScale;
     if (index === 0) {
-      ctx.lineTo(x, y);
+      ctx.lineTo(x, y - 1);
     } else {
-      ctx.lineTo(x, y);
+      ctx.lineTo(x, y - 1);
     }
   });
 
@@ -728,26 +794,32 @@ function drawGraph() {
     const y = height - 20 - point.sig * yScale;
 
     // Draw current frequency line
-    if (Number(dataFrequencyValue) === Number(point.freq)) {
+    if (Number(dataFrequencyValue).toFixed(1) === Number(point.freq).toFixed(1)) {
       // Calculate the x-coordinates for the white vertical line
       let highlightBandwidthLow = 0.1;
       let highlightBandwidthHigh = 0.1;
       const highlightFreq = Number(dataFrequencyValue);
-      if (highlightFreq === minFreq) highlightBandwidthLow = 0.05;
-      if (highlightFreq === minFreq) highlightBandwidthHigh = 0.05;
+      if (highlightFreq === minFreq) highlightBandwidthLow = 0.0;
+      if (highlightFreq === minFreq) highlightBandwidthHigh = 0.1;
       const leftX = xOffset + (highlightFreq - highlightBandwidthLow - minFreq) * xScale; // 0.1 MHz to the left
       const rightX = xOffset + (highlightFreq + highlightBandwidthHigh - minFreq) * xScale; // 0.1 MHz to the right
 
       // Set style for white line
-      ctx.fillStyle = 'rgba(224, 224, 240, 0.4)';
+      ctx.fillStyle = 'rgba(224, 224, 240, 0.3)';
 
       // Draw vertical highlight region
       ctx.fillRect(leftX, 0, rightX - leftX, height - 20); // From top to bottom of graph
     }
   });
 
+  const colorLines = getComputedStyle(document.documentElement).getPropertyValue('--color-5').trim();
+
   ctx.setLineDash([]);
-  ctx.strokeStyle = '#88888f';
+  if (borderlessTheme) {
+    ctx.strokeStyle = colorLines;
+  } else {
+    ctx.strokeStyle = '#98989f';
+  }
   ctx.lineWidth = 0.8;
 
   ctx.beginPath();

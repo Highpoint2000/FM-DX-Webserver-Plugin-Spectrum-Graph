@@ -1,29 +1,135 @@
 /*
-    Spectrum Graph v1.0.0b5 by AAD
+    Spectrum Graph v1.0.0b6 by AAD
     Server-side code
 */
 
+const pluginName = "Spectrum Graph";
+
+// Library imports
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const WebSocket = require('ws');
+
+// File imports
 const config = require('./../../config.json');
+const { logInfo, logError } = require('../../server/console');
 const endpointsDatahandler = require('../../server/datahandler'); // To grab signal strength data
-const { logInfo, logError } = require('./../../server/console');
 
 // const variables
 const webserverPort = config.webserver.webserverPort || 8080;
 const externalWsUrl = `ws://127.0.0.1:${webserverPort}`;
 
 // let variables
-let extraSocket, textSocket, textSocketLost, messageParsed, messageParsedTimeout, startTime, tuningLowerLimitScan, tuningUpperLimitScan, tuningLowerLimitOffset, tuningUpperLimitOffset, ipAddress;
+let extraSocket, textSocket, textSocketLost, messageParsed, messageParsedTimeout, startTime, tuningLowerLimitScan, tuningUpperLimitScan, tuningLowerLimitOffset, tuningUpperLimitOffset, debounceTimer;
+let ipAddress = 'no IP';
 let currentFrequency = 0;
 let isScanning = false;
 let frequencySocket = null;
 let sigArray = [];
 
-//////////////////////////////
+// Define paths used for config
+const rootDir = path.dirname(require.main.filename); // Locate directory where index.js is located
+const configFolderPath = path.join(rootDir, 'plugins_configs');
+const configFilePath = path.join(configFolderPath, 'SpectrumGraph.json');
 
+// Default configuration
 let bandwidth = 0; // MHz
+let tuningStepSize = 100; // kHz
 
-//////////////////////////////
+const defaultConfig = {
+    bandwidth: 0,
+    tuningStepSize: 100
+};
+
+// Function to ensure the folder and file exist
+function checkConfigFile() {
+    // Check if the plugins_configs folder exists
+    if (!fs.existsSync(configFolderPath)) {
+        logInfo(`${pluginName}: Creating plugins_configs folder...`);
+        fs.mkdirSync(configFolderPath, { recursive: true }); // Create the folder recursively if needed
+    }
+
+    // Check if json file exists
+    if (!fs.existsSync(configFilePath)) {
+        logInfo(`${pluginName}: Creating default SpectrumGraph.json file...`);
+        // Create the JSON file with default content and custom formatting
+        const defaultConfig = {
+            bandwidth: ['0'],
+            tuningStepSize: ['100']
+        };
+
+        // Manually format the JSON with the desired structure
+        const formattedConfig = `{
+    "bandwidth": ${defaultConfig.bandwidth.map(value => `${value}`).join(', ')},
+    "tuningStepSize": ${defaultConfig.tuningStepSize.map(value => `${value}`).join(', ')}
+}`;
+
+        // Write the formatted JSON to the file
+        fs.writeFileSync(configFilePath, formattedConfig);
+    }
+}
+
+// Call function to ensure folder and file exist
+checkConfigFile();
+
+// Function to load the configuration file
+function loadConfigFile(isReloaded) {
+    try {
+        if (fs.existsSync(configFilePath)) {
+            const configContent = fs.readFileSync(configFilePath, 'utf-8');
+            const config = JSON.parse(configContent);
+
+            // Ensure variables are numbers, else fallback to defaults
+            bandwidth = !isNaN(Number(config.bandwidth)) ? Number(config.bandwidth) : defaultConfig.bandwidth;
+            tuningStepSize = !isNaN(Number(config.tuningStepSize)) ? Number(config.tuningStepSize) : defaultConfig.tuningStepSize;
+
+            logInfo(`${pluginName}: Configuration ${isReloaded || ''}loaded successfully.`);
+        } else {
+            logInfo(`${pluginName}: Configuration file not found. Creating default configuration.`);
+            saveDefaultConfig();
+        }
+    } catch (error) {
+        logInfo(`${pluginName}: Error loading configuration file: ${error.message}. Resetting to default.`);
+        saveDefaultConfig();
+    }
+}
+
+// Function to save the default configuration file
+function saveDefaultConfig() {
+    const formattedConfig = JSON.stringify(defaultConfig, null, 4); // Pretty print with 4 spaces
+    if (!fs.existsSync(configFolderPath)) {
+        fs.mkdirSync(configFolderPath, { recursive: true });
+    }
+    fs.writeFileSync(configFilePath, formattedConfig);
+    loadConfigFile(); // Reload variables
+}
+
+// Function to watch the configuration file for changes
+function watchConfigFile() {
+    fs.watch(configFilePath, (eventType) => {
+        if (eventType === 'change') {
+            clearTimeout(debounceTimer); // Clear any existing debounce timer
+            debounceTimer = setTimeout(() => {
+                loadConfigFile('re');
+            }, 1000);
+        }
+    });
+}
+
+// Initialize the configuration system
+function initConfigSystem() {
+    loadConfigFile(); // Load configuration values initially
+    watchConfigFile(); // Start watching for changes
+    if (bandwidth) {
+      logInfo(`${pluginName} configuration: Bandwidth: ${bandwidth} MHz, Tuning Steps: ${tuningStepSize} kHz`);
+    } else {
+      logInfo(`${pluginName} configuration: Bandwidth: Unlimited MHz, Tuning Steps: ${tuningStepSize} kHz`);
+    }
+}
+
+// Initialize the configuration system
+initConfigSystem();
 
 async function TextWebSocket(messageData) {
     if (!textSocket || textSocket.readyState === WebSocket.CLOSED) {
@@ -107,7 +213,7 @@ async function ExtraWebSocket() {
                     // Handle messages
                     if (!messageParsedTimeout) {
                       if (message.type === 'spectrum-graph' && message.value?.status === 'scan') {
-                          ipAddress = message.value?.ip || 'Unknown IP';
+                          ipAddress = message.value?.ip.slice(0, 64) || 'unknown IP';
                           if (!isScanning) restartScan('scan');
                       } else if (!message.value?.status === 'scan') {
                         logError(`Spectrum Graph unknown command received:`, message);
@@ -137,10 +243,7 @@ async function ExtraWebSocket() {
 
 ExtraWebSocket();
 TextWebSocket();
-
-
-
-
+restartScan('scan'); // First run
 
 function sendCommand(socket, command) {
     //logInfo(`Spectrum Graph send command:`, command);
@@ -241,13 +344,13 @@ function startScan(command) {
       // The magic happens here
       sendCommandToClient(`Sa${tuningLowerLimitScan - tuningLowerLimitOffset}`);
       sendCommandToClient(`Sb${tuningUpperLimitScan + tuningUpperLimitOffset}`);
-      sendCommandToClient('Sc100');
-      sendCommandToClient('S');
+      sendCommandToClient(`Sc${tuningStepSize}`);
+      sendCommandToClient(`S`);
     }
-    logInfo(`Spectrum Graph: Spectral commands sent (${ipAddress})...`);
-          
+    logInfo(`Spectrum Graph: Spectral commands sent (IP: ${ipAddress})...`);
+
     // Wait for sd value using async
-    async function waitForSdValue(timeout = 10000, interval = 40) {
+    async function waitForSdValue(timeout = 30000, interval = 40) {
         startTime = Date.now();
 
         while (Date.now() - startTime < timeout) {
@@ -271,6 +374,12 @@ function startScan(command) {
             if (sdValue && sdValue.endsWith(', ')) {
                 sdValue = sdValue.slice(0, -2);
             }
+
+            // Possibly interrupted
+            if (sdValue && sdValue.endsWith(',')) {
+                stopScanning(false);
+                sdValue = null;
+            }
             //console.log(sdValue);
 
             logInfo(`Spectrum Graph: Spectrum scan (${(tuningLowerLimitScan / 1000)} - ${(tuningUpperLimitScan / 1000)} MHz) complete in ${Date.now() - startTime}ms.`);
@@ -291,7 +400,7 @@ function startScan(command) {
             });
             extraSocket.send(messageClient);
         } catch (error) {
-            logError(`Spectrum Graph: Failed to get 'dataToSend.sd' value, error:`, error.message);
+            logError(`Spectrum Graph failed to get 'dataToSend.sd' value, error:`, error.message);
             stopScanning(true);
         }
     })();
