@@ -22,6 +22,12 @@ This plugin scans the FM radio band in under 1.5 seconds, then displayed in a sp
 
 ### BETA version
 
+v1.0.0b8
+--------
+* Added fixed/dynamic vertical graph button
+* Added ability to use mouse scroll wheel to tune
+* Fixed tooltip causing scrollbars
+
 v1.0.0b7
 --------
 * Added user configurable graph smoothing option
