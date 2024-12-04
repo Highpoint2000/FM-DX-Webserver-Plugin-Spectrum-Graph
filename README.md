@@ -11,7 +11,7 @@ This plugin scans the FM radio band in under 1.5 seconds, then displayed in a sp
 
 
 * ### Replace _**"/server/datahandler.js"**_ with [this](https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph/blob/main/datahandler.js) version.
-(It adds 4 lines of code required for the plugin to function.)
+* (It adds 4 lines of code required for the plugin to function.)
 
 
 * [Download the latest zip file](https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph/archive/refs/heads/main.zip)
