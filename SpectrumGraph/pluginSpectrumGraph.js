@@ -579,6 +579,7 @@ function displaySignalCanvas() {
     }
     const signalCanvas = document.getElementById('signal-canvas');
     if (signalCanvas) {
+		console.log('jaaa');
         signalCanvas.style.display = 'block';
     }
 }
@@ -591,6 +592,10 @@ function displaySdrGraph() {
         isGraphOpen = true;
         if (!borderlessTheme) canvas.style.border = "1px solid var(--color-3)";
         setTimeout(drawGraph, drawGraphDelay);
+		const signalCanvas = document.getElementById('signal-canvas');
+		if (signalCanvas) {
+			signalCanvas.style.display = 'none';
+		}
     }
     const loggingCanvas = document.getElementById('logging-canvas');
     if (loggingCanvas) {
@@ -607,12 +612,6 @@ function displaySdrGraph() {
     const ContainerAntenna = document.getElementById('Antenna');
     if (ContainerAntenna) {
         ContainerAntenna.style.display = 'none';
-        ButtonsContainer.style.marginLeft = "-20.5%";
-        ButtonsContainer.style.marginTop = "166px";
-    }
-    const signalCanvas = document.getElementById('signal-canvas');
-    if (signalCanvas) {
-        signalCanvas.style.display = 'none';
     }
     ScanButton();
 }
