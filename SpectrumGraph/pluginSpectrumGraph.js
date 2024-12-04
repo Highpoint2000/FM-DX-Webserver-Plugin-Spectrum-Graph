@@ -97,10 +97,10 @@ setTimeout(setupSendSocket, 400);
 // Function to check for updates
 async function fetchFirstLine() {
     if (checkUpdates) {
-        const urlUpdate = 'https://raw.githubusercontent.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph/refs/heads/main/version' + '?nocache=' + new Date().getTime();
+        const urlCheckForUpdate = 'https://raw.githubusercontent.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph/refs/heads/main/version'
 
         try {
-            const response = await fetch(urlUpdate);
+            const response = await fetch(urlCheckForUpdate);
             if (!response.ok) {
                 throw new Error(`Spectrum Graph update check HTTP error! status: ${response.status}`);
             }
