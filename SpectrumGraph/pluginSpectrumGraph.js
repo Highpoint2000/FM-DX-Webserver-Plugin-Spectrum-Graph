@@ -172,7 +172,7 @@ function ScanButton() {
     const rectangularButtonStyle = `
         .rectangular-spectrum-button {
             position: absolute;
-            top: 8px;
+            top: 10px;
             right: 16px;
             z-index: 10;
             opacity: 0.8;
@@ -258,7 +258,7 @@ function SmoothingOnOffButton() {
     const buttonStyle = `
         .smoothing-on-off-button {
             position: absolute;
-            top: 8px;
+            top: 10px;
             right: 56px;
             z-index: 10;
             opacity: 0.8;
@@ -347,7 +347,7 @@ function ToggleFixedOrDynamicButton() {
     const buttonStyle = `
         .fixed-dynamic-on-off-button {
             position: absolute;
-            top: 8px;
+            top: 10px;
             right: 96px;
             z-index: 10;
             opacity: 0.8;
