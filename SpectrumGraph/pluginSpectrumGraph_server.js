@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.0.0b7 by AAD
+    Spectrum Graph v1.0.0b8 by AAD
     Server-side code
 */
 
