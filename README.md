@@ -22,6 +22,14 @@ This plugin scans the FM radio band in under 1.5 seconds, then displayed in a sp
 
 ### BETA version
 
+v1.0.0b7
+--------
+* Added user configurable graph smoothing option
+* Added retry delay option to configuration
+* Added check for update option
+* Configured plugin to not open while signal graph is hidden
+* Minor visual fixes
+
 v1.0.0b6
 --------
 * Added configuration file
