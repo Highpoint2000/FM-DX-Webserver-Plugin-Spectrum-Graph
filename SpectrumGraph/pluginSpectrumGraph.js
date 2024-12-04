@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.0.0b6 by AAD
+    Spectrum Graph v1.0.0b7 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 */
 
@@ -7,11 +7,13 @@
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const enableSmoothing = true;                 // Recommended if using TEF module
+const checkUpdates = true;                    // Checks online if a new version is available
 const borderlessTheme = true;                 // Background and text colours match FM-DX Webserver theme
 const useButtonSpacingBetweenCanvas = true;   // Other plugins are likely to override this if set to false
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+const pluginVersion = '1.0.0b7';
 
 // Create the WebSocket connection
 const currentURL = new URL(window.location.href);
@@ -34,6 +36,9 @@ let isGraphOpen = false;
 let isSpectrumOn = false;
 let ipAddress = '0';
 let sigArray = [];
+let enableSmoothing = localStorage.getItem('enableSpectrumGraphSmoothing') === 'true';
+let removeUpdateTextTimeout;
+let updateText;
 let wsSendSocket;
 
 // WebSocket to send request and receive response
@@ -59,7 +64,6 @@ async function setupSendSocket() {
                         if (sigArray.length > 0) {
                             setTimeout(drawGraph, drawGraphDelay);
                         }
-
                         /*
                         if (Array.isArray(data.value)) {
                             // Process sigArray
@@ -84,6 +88,42 @@ async function setupSendSocket() {
         }
     }
 }
+// WebSocket and scanner button initialisation
+setTimeout(setupSendSocket, 400);
+
+// Function to check for updates
+async function fetchFirstLine() {
+    if (checkUpdates) {
+        const url = 'https://raw.githubusercontent.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph/refs/heads/main/version';
+
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Spectrum Graph update check HTTP error! status: ${response.status}`);
+            }
+
+            const text = await response.text();
+            const firstLine = text.split('\n')[0]; // Extract first line
+
+            const version = firstLine;
+
+            return version;
+        } catch (error) {
+            console.error('Spectrum Graph error fetching file:', error);
+            return null;
+        }
+    }
+}
+
+// Check for updates
+fetchFirstLine().then(version => {
+    if (checkUpdates && version) {
+        if (version !== pluginVersion) {
+          updateText = "There is a new version of this plugin available";
+          console.log(`Spectrum Graph: ${updateText}`)
+        }
+    }
+});
 
 // Create scan button to refresh graph
 function ScanButton() {
@@ -137,8 +177,8 @@ function ScanButton() {
             padding: 5px 10px;
             cursor: pointer;
             transition: background-color 0.3s, color 0.3s, border-color 0.3s;
-            width: auto;
-            height: auto;
+            width: 32px;
+            height: 24px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -149,9 +189,149 @@ function ScanButton() {
     const styleElement = document.createElement('style');
     styleElement.innerHTML = rectangularButtonStyle;
     document.head.appendChild(styleElement);
+
+    SmoothingOnOffButton();
+    if (updateText) insertUpdateText(updateText);
 }
-// WebSocket and scanner button initialisation
-setTimeout(setupSendSocket, 200);
+
+// Create scan button to refresh graph
+function SmoothingOnOffButton() {
+    // Remove any existing instances of button
+    const existingButtons = document.querySelectorAll('.smoothing-on-off-button');
+    existingButtons.forEach(button => button.remove());
+
+    // Create new button
+    const smoothingOnOffButton = document.createElement('button');
+    smoothingOnOffButton.id = 'smoothing-on-off-button';
+    smoothingOnOffButton.setAttribute('aria-label', 'Toggle On/Off');
+    smoothingOnOffButton.classList.add('smoothing-on-off-button');
+    smoothingOnOffButton.innerHTML = '<i class="fa-solid fa-chart-area"></i>';
+
+    // Button state (off by default)
+    let isOn = false;
+
+    if (enableSmoothing) {
+        isOn = true;
+        smoothingOnOffButton.classList.toggle('button-on', isOn);
+    }
+
+    // Add event listener for toggle functionality
+    smoothingOnOffButton.addEventListener('click', () => {
+        isOn = !isOn; // Toggle state
+        smoothingOnOffButton.classList.toggle('button-on', isOn); // Highlight if "on"
+
+        if (isOn) {
+            enableSmoothing = true;
+            localStorage.setItem('enableSpectrumGraphSmoothing', 'true');
+        } else {
+            enableSmoothing = false;
+            localStorage.setItem('enableSpectrumGraphSmoothing', 'false');
+        }
+        setTimeout(drawGraph, drawGraphDelay);
+    });
+
+    // Locate the canvas and its parent container
+    const canvas = document.getElementById('sdr-graph');
+    if (canvas) {
+        const canvasContainer = canvas.parentElement;
+        if (canvasContainer && canvasContainer.classList.contains('canvas-container')) {
+            canvasContainer.style.position = 'relative';
+            canvasContainer.appendChild(smoothingOnOffButton);
+
+            // Adjust position to be left of spectrum button if it exists
+            const spectrumButton = document.getElementById('spectrum-scan-button');
+            if (spectrumButton) {
+                smoothingOnOffButton.style.right = `${parseInt(spectrumButton.style.right, 10) + 40}px`; // 40px offset
+            }
+        } else {
+            console.error('Spectrum Graph: Parent container is not .canvas-container');
+        }
+    } else {
+        console.error('Spectrum Graph: #sdr-graph not found');
+    }
+
+    // Add styles
+    const buttonStyle = `
+        .smoothing-on-off-button {
+            position: absolute;
+            top: 8px;
+            right: 56px;
+            z-index: 10;
+            opacity: 0.8;
+            border-radius: 5px;
+            padding: 5px 10px;
+            cursor: pointer;
+            transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+            width: 32px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.8);
+        }
+        .smoothing-on-off-button i {
+            font-size: 14px;
+        }
+        .smoothing-on-off-button.button-on {
+            filter: brightness(130%) contrast(110%);
+            box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.5), 0 0 10px var(--color-5);
+        }
+    `;
+
+    const styleElement = document.createElement('style');
+    styleElement.innerHTML = buttonStyle;
+    document.head.appendChild(styleElement);
+}
+
+function insertUpdateText(updateText) {
+    // Remove any existing update text
+    const existingText = document.querySelector('.spectrum-graph-update-text');
+    if (existingText) existingText.remove();
+
+    // Create new text element
+    const updateTextElement = document.createElement('div');
+    updateTextElement.classList.add('spectrum-graph-update-text');
+    updateTextElement.textContent = updateText;
+
+    // Style the text
+    updateTextElement.style.position = 'absolute';
+    updateTextElement.style.top = '8px';
+    updateTextElement.style.left = '36px';
+    updateTextElement.style.zIndex = '10';
+    updateTextElement.style.color = 'var(--color-5-transparent)';
+    updateTextElement.style.fontSize = '14px';
+    updateTextElement.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+    updateTextElement.style.padding = '4px 8px';
+    updateTextElement.style.borderRadius = '5px';
+
+    // Locate canvas container
+    const canvas = document.getElementById('sdr-graph');
+    if (canvas) {
+        const canvasContainer = canvas.parentElement;
+        if (canvasContainer && canvasContainer.classList.contains('canvas-container')) {
+            canvasContainer.style.position = 'relative';
+            canvasContainer.appendChild(updateTextElement);
+        } else {
+            console.error('Spectrum Graph: Parent container is not .canvas-container');
+        }
+    } else {
+        console.error('Spectrum Graph: #sdr-graph not found');
+    }
+
+    function resetUpdateTextTimeout() {
+        // Clear any existing timeout
+        clearTimeout(removeUpdateTextTimeout);
+
+        // Begin new timeout
+        removeUpdateTextTimeout = setTimeout(() => {
+            const sdrCanvasUpdateText = document.querySelector('.spectrum-graph-update-text');
+            if (sdrCanvasUpdateText) {
+                sdrCanvasUpdateText.remove();
+            }
+        }, 10000);
+    }
+    resetUpdateTextTimeout();
+}
 
 fetch('https://api.ipify.org?format=json')
     .then((response) => response.json())
@@ -274,10 +454,19 @@ function displaySignalCanvas() {
         sdrCanvas.style.display = 'none';
         isGraphOpen = false;
     }
-    const sdrCanvasButton = document.getElementById('spectrum-scan-button');
-    if (sdrCanvasButton) {
-        sdrCanvasButton.style.display = 'none';
+    const sdrCanvasScanButton = document.getElementById('spectrum-scan-button');
+    if (sdrCanvasScanButton) {
+        sdrCanvasScanButton.style.display = 'none';
     }
+    const sdrCanvasSmoothingButton = document.getElementById('smoothing-on-off-button');
+    if (sdrCanvasSmoothingButton) {
+        sdrCanvasSmoothingButton.style.display = 'none';
+    }
+    const sdrCanvasUpdateText = document.querySelector('.spectrum-graph-update-text');
+    if (sdrCanvasUpdateText) {
+        sdrCanvasUpdateText.remove();
+    }
+
     const loggingCanvas = document.getElementById('logging-canvas');
     if (loggingCanvas) {
         loggingCanvas.style.display = 'none';
@@ -344,6 +533,9 @@ function adjustSdrGraphCanvasHeight() {
 
 // Toggle spectrum state and update UI accordingly
 function toggleSpectrum() {
+    // Do not proceed to open canvas if signal canvas is hidden
+    if (!document.querySelector("#signal-canvas")?.offsetParent && !isSpectrumOn) return;
+
     const SpectrumButton = document.getElementById('spectrum-graph-button');
     const ButtonsContainer = document.querySelector('.download-buttons-container');
     const antennaImage = document.querySelector('#antenna'); // Ensure ID 'antenna' is correct
@@ -463,7 +655,7 @@ function initializeCanvasInteractions() {
     let closestPoint = null;
     let minDistance = Infinity;
     for (let point of sigArray) {
-      const distance = Math.abs(point.freq - freq);
+      const distance = Math.abs(point.freq - freq.toFixed(1)); // toFixed required to ensure correct frequency tooltip and highlight
       if (distance < minDistance) {
         minDistance = distance;
         closestPoint = point;
@@ -513,20 +705,7 @@ function initializeCanvasInteractions() {
     socket.send(command);
     setTimeout(() => {
         setTimeout(drawGraph, drawGraphDelay);
-        /*
-        const message = JSON.stringify({
-            type: 'spectrum-graph',
-            value: {
-                status: 'scan',
-            }
-        });
-        if (wsSendSocket) wsSendSocket.send(message);
-        */
-        // Run again to compensate for high pings
-        setTimeout(() => {
-            setTimeout(drawGraph, drawGraphDelay);
-        }, 800);
-    }, 200);
+    }, 40);
   }
 
   // Add event listeners
@@ -534,8 +713,6 @@ function initializeCanvasInteractions() {
   canvas.addEventListener('mouseleave', () => {
       tooltip.style.visibility = 'hidden';
       setTimeout(() => {
-          const ctx = canvas.getContext('2d');
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
           drawGraph();
       }, 800);
   });

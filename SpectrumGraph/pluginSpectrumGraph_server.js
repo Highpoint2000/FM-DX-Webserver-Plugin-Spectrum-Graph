@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.0.0b6 by AAD
+    Spectrum Graph v1.0.0b7 by AAD
     Server-side code
 */
 
@@ -24,6 +24,7 @@ const externalWsUrl = `ws://127.0.0.1:${webserverPort}`;
 let extraSocket, textSocket, textSocketLost, messageParsed, messageParsedTimeout, startTime, tuningLowerLimitScan, tuningUpperLimitScan, tuningLowerLimitOffset, tuningUpperLimitOffset, debounceTimer;
 let ipAddress = 'no IP';
 let currentFrequency = 0;
+let lastRestartTime = 0;
 let isScanning = false;
 let frequencySocket = null;
 let sigArray = [];
@@ -34,10 +35,12 @@ const configFolderPath = path.join(rootDir, 'plugins_configs');
 const configFilePath = path.join(configFolderPath, 'SpectrumGraph.json');
 
 // Default configuration
+let retryDelay = 10; // seconds
 let tuningRange = 0; // MHz
 let tuningStepSize = 100; // kHz
 
 const defaultConfig = {
+    retryDelay: 10,
     tuningRange: 0,
     tuningStepSize: 100
 };
@@ -55,12 +58,14 @@ function checkConfigFile() {
         logInfo(`${pluginName}: Creating default SpectrumGraph.json file...`);
         // Create the JSON file with default content and custom formatting
         const defaultConfig = {
+            retryDelay: ['10'],
             tuningRange: ['0'],
             tuningStepSize: ['100']
         };
 
         // Manually format the JSON with the desired structure
         const formattedConfig = `{
+    "retryDelay": ${defaultConfig.retryDelay.map(value => `${value}`).join(', ')},
     "tuningRange": ${defaultConfig.tuningRange.map(value => `${value}`).join(', ')},
     "tuningStepSize": ${defaultConfig.tuningStepSize.map(value => `${value}`).join(', ')}
 }`;
@@ -81,6 +86,7 @@ function loadConfigFile(isReloaded) {
             const config = JSON.parse(configContent);
 
             // Ensure variables are numbers, else fallback to defaults
+            retryDelay = !isNaN(Number(config.retryDelay)) ? Number(config.retryDelay) : defaultConfig.retryDelay;
             tuningRange = !isNaN(Number(config.tuningRange)) ? Number(config.tuningRange) : defaultConfig.tuningRange;
             tuningStepSize = !isNaN(Number(config.tuningStepSize)) ? Number(config.tuningStepSize) : defaultConfig.tuningStepSize;
 
@@ -122,9 +128,9 @@ function initConfigSystem() {
     loadConfigFile(); // Load configuration values initially
     watchConfigFile(); // Start watching for changes
     if (tuningRange) {
-      logInfo(`${pluginName} configuration: Tuning Range: ${tuningRange} MHz, Tuning Steps: ${tuningStepSize} kHz`);
+      logInfo(`${pluginName} configuration: Retry Delay: ${retryDelay} seconds, Tuning Range: ${tuningRange} MHz, Tuning Steps: ${tuningStepSize} kHz`);
     } else {
-      logInfo(`${pluginName} configuration: Tuning Range: Unlimited MHz, Tuning Steps: ${tuningStepSize} kHz`);
+      logInfo(`${pluginName} configuration: Retry Delay: ${retryDelay} seconds, Tuning Range: Unlimited MHz, Tuning Steps: ${tuningStepSize} kHz`);
     }
 }
 
@@ -347,7 +353,7 @@ function startScan(command) {
       sendCommandToClient(`Sc${tuningStepSize}`);
       sendCommandToClient(`S`);
     }
-    logInfo(`Spectrum Graph: Spectral commands sent (IP: ${ipAddress})...`);
+    logInfo(`Spectrum Graph: Spectral commands sent (IP: ${ipAddress})`);
 
     // Wait for sd value using async
     async function waitForSdValue(timeout = 30000, interval = 40) {
@@ -415,6 +421,15 @@ function stopScanning(status) {
 }
 
 function restartScan(command) {
+    const now = Date.now();
+
+    if (now - lastRestartTime < (retryDelay * 1000)) {
+        logInfo(`Spectrum Graph in cooldown mode, can retry in ${(((retryDelay * 1000) - (now - lastRestartTime)) / 1000).toFixed(1)} seconds (IP: ${ipAddress})`);
+        return;
+    }
+    
+    lastRestartTime = now;
+
     // Restart scan
     sigArray = [];
     sdValue = null;
