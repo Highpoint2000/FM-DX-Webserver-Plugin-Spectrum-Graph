@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.0.0b8 by AAD
+    Spectrum Graph v1.0.0b9 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 */
 
@@ -14,7 +14,7 @@ const useButtonSpacingBetweenCanvas = true;   // Other plugins are likely to ove
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const pluginVersion = '1.0.0b8';
+const pluginVersion = '1.0.0b9';
 
 // Create the WebSocket connection
 const currentURL = new URL(window.location.href);
@@ -389,7 +389,7 @@ function insertUpdateText(updateText) {
 
     // Style the text
     updateTextElement.style.position = 'absolute';
-    updateTextElement.style.top = '8px';
+    updateTextElement.style.top = '32px';
     updateTextElement.style.left = '36px';
     updateTextElement.style.zIndex = '10';
     updateTextElement.style.color = 'var(--color-5-transparent)';
@@ -722,11 +722,10 @@ function initializeCanvasInteractions() {
   tooltip.style.fontSize = '12px';
   tooltip.style.pointerEvents = 'none';
   tooltip.style.visibility = 'hidden';
-  tooltip.style.zIndex = '10';
-  document.body.appendChild(tooltip);
+  tooltip.style.zIndex = '20';
 
-  // Insert tooltip after canvas-container
-  canvasContainer.insertAdjacentElement('afterend', tooltip);
+  // Append tooltip inside the canvas-container
+  canvasContainer.appendChild(tooltip);
 
   // Scaling factors and bounds
   let xScale, minFreq, freqRange, yScale;
@@ -753,7 +752,7 @@ function initializeCanvasInteractions() {
     let closestPoint = null;
     let minDistance = Infinity;
     for (let point of sigArray) {
-      const distance = Math.abs(point.freq - freq.toFixed(1)); // toFixed required to ensure correct frequency tooltip and highlight
+      const distance = Math.abs(point.freq - freq.toFixed(1));
       if (distance < minDistance) {
         minDistance = distance;
         closestPoint = point;
@@ -782,14 +781,14 @@ function initializeCanvasInteractions() {
 
       // Check if tooltip is going out of bounds on the right
       const tooltipWidth = tooltip.offsetWidth;
-      if (rect.left + tooltipX + tooltipWidth > window.innerWidth) {
-        // Shift tooltip left to fit within window
-        tooltipX = window.innerWidth - rect.left - tooltipWidth - 10;
+      if (tooltipX + tooltipWidth > canvas.width) {
+          // Adjust tooltip position to fit within canvas
+          tooltipX = mouseX - tooltip.offsetWidth - 10;
       }
 
       // Position and display tooltip
-      tooltip.style.left = `${rect.left + tooltipX}px`;
-      tooltip.style.top = `${rect.top + tooltipY - 30}px`; // Position above graph point
+      tooltip.style.left = `${tooltipX}px`;
+      tooltip.style.top = `${tooltipY - 30}px`; // Position above graph point
       tooltip.textContent = ` ${freq.toFixed(1)} MHz, ${signalValue.toFixed(0)} dBf `;
       tooltip.style.visibility = 'visible';
     }
@@ -809,24 +808,24 @@ function initializeCanvasInteractions() {
     console.log(`Spectrum Graph: Sending command "${command}"`);
     socket.send(command);
     setTimeout(() => {
-        setTimeout(drawGraph, drawGraphDelay);
+      setTimeout(drawGraph, drawGraphDelay);
     }, 40);
   }
 
   // Function to control frequency via mouse wheel
   function handleWheelScroll(event) {
       if (enableMouseScrollWheel) {
-          // Normalise deltaY value for cross-browser consistency
+          event.preventDefault(); // Prevent webpage scrolling
+
+          // Normalize deltaY value for cross-browser consistency
           const delta = event.deltaY || event.detail || -event.wheelDelta;
 
           if (delta < 0) {
               // Scroll up
-              const command = `T${(Math.round(dataFrequencyValue * 1000) + 100)}`;
-              socket.send(command);
+              tuneUp();
           } else {
               // Scroll down
-              const command = `T${(Math.round(dataFrequencyValue * 1000) - 100)}`;
-              socket.send(command);
+              tuneDown();
           }
       }
   }
@@ -851,7 +850,6 @@ function initializeCanvasInteractions() {
   };
 }
 
-
 // Select container where canvas should be added
 const container = document.querySelector('.canvas-container');
 
@@ -860,6 +858,8 @@ const canvas = document.createElement('canvas');
 
 // Set canvas attributes
 canvas.id = 'sdr-graph';
+canvas.position='relative'
+
 canvas.width = 1170;
 if (window.innerHeight < 860 && window.innerWidth > 480) {
   canvas.height = canvasHeightSmall;
@@ -869,7 +869,6 @@ if (window.innerHeight < 860 && window.innerWidth > 480) {
 
 // Append the canvas to the container
 container.appendChild(canvas);
-
 
 // Get background colour
 function getBackgroundColor(element) {
@@ -888,7 +887,6 @@ const observer = new MutationObserver(() => {
 });
 const config = { attributes: true };
 observer.observe(wrapperOuter, config);
-
 
 // Draw graph
 function drawGraph() {

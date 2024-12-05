@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.0.0b8 by AAD
+    Spectrum Graph v1.0.0b9 by AAD
     Server-side code
 */
 
@@ -14,7 +14,7 @@ const WebSocket = require('ws');
 // File imports
 const config = require('./../../config.json');
 const { logInfo, logError } = require('../../server/console');
-const endpointsDatahandler = require('../../server/datahandler'); // To grab signal strength data
+const datahandlerReceived = require('../../server/datahandler'); // To grab signal strength data
 
 // const variables
 const webserverPort = config.webserver.webserverPort || 8080;
@@ -22,7 +22,7 @@ const externalWsUrl = `ws://127.0.0.1:${webserverPort}`;
 
 // let variables
 let extraSocket, textSocket, textSocketLost, messageParsed, messageParsedTimeout, startTime, tuningLowerLimitScan, tuningUpperLimitScan, tuningLowerLimitOffset, tuningUpperLimitOffset, debounceTimer;
-let ipAddress = 'no IP';
+let ipAddress = 'none';
 let currentFrequency = 0;
 let lastRestartTime = 0;
 let isScanning = false;
@@ -249,7 +249,33 @@ async function ExtraWebSocket() {
 
 ExtraWebSocket();
 TextWebSocket();
-restartScan('scan'); // First run
+
+// Function for first run
+function waitForTextSocket(maxWaitTime = 30000) {
+    const startTime = Date.now();
+
+    return new Promise((resolve, reject) => {
+        const check = () => {
+            if (typeof textSocket !== 'undefined' && textSocket !== null) {
+                resolve(textSocket);
+            } else if (Date.now() - startTime >= maxWaitTime) {
+                logError(new Error(`Spectrum Graph: textSocket was not defined within 30 seconds`));
+                reject();
+            } else {
+                setTimeout(check, 1000);
+            }
+        };
+
+        check();
+    });
+}
+
+waitForTextSocket()
+    .then((value) => {
+      logInfo(`Spectrum Graph: textSocket is defined, preparing first run...`);
+      setTimeout(() => restartScan('scan'), 10000); // First run
+    })
+    .catch(() => {});
 
 function sendCommand(socket, command) {
     //logInfo(`Spectrum Graph send command:`, command);
@@ -306,7 +332,7 @@ waitForServer();
 
 function startScan(command) {
     // Begin scan
-    endpointsDatahandler.dataToSend.sd = null;
+    datahandlerReceived.dataToSend.sd = null;
 
     let tuningLowerLimit = config.webserver.tuningLowerLimit;
     let tuningUpperLimit = config.webserver.tuningUpperLimit;
@@ -356,20 +382,20 @@ function startScan(command) {
     logInfo(`Spectrum Graph: Spectral commands sent (IP: ${ipAddress})`);
 
     // Wait for sd value using async
-    async function waitForSdValue(timeout = 30000, interval = 40) {
+    async function waitForSdValue(timeout = 10000, interval = 40) {
         startTime = Date.now();
 
         while (Date.now() - startTime < timeout) {
-            let sdValue = endpointsDatahandler.dataToSend.sd;
+            let sdValue = datahandlerReceived.dataToSend.sd;
 
             if (sdValue !== null && sdValue !== undefined) {
                 return sdValue; // Return when data is fetched
             }
 
-            await new Promise(resolve => setTimeout(resolve, interval)); // Wait for the next check
+            await new Promise(resolve => setTimeout(resolve, interval)); // Wait for next check
         }
 
-        throw new Error(`Spectrum Graph timed out`); // Throw error if timeout is reached
+        throw new Error(`Spectrum Graph timed out`); // Throw error if timed out
     }
 
     (async () => {
@@ -388,7 +414,7 @@ function startScan(command) {
             }
             //console.log(sdValue);
 
-            logInfo(`Spectrum Graph: Spectrum scan (${(tuningLowerLimitScan / 1000)} - ${(tuningUpperLimitScan / 1000)} MHz) complete in ${Date.now() - startTime}ms.`);
+            logInfo(`Spectrum Graph: Spectrum scan (${(tuningLowerLimitScan / 1000)} - ${(tuningUpperLimitScan / 1000)} MHz) complete in ${((Date.now() - startTime) / 1000).toFixed(1)} seconds.`);
 
             // Split the response into pairs and process each one
             sigArray = sdValue.split(',').map(pair => {
