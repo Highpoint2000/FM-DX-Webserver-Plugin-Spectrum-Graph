@@ -579,7 +579,6 @@ function displaySignalCanvas() {
     }
     const signalCanvas = document.getElementById('signal-canvas');
     if (signalCanvas) {
-		console.log('jaaa');
         signalCanvas.style.display = 'block';
     }
 }
