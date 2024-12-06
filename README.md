@@ -4,14 +4,9 @@ This plugin scans the FM radio band in under 1.5 seconds, then displayed in a sp
 
 ## Requirements:
 
-- FM-DX Webserver v1.3.2
-- TEF radio with latest **TEF6686_ESP32** beta firmware (v2.11.8) or
-- TEF module with latest **FM-DX-Tuner** firmware
-- Modified **datahandler.js** file
-
-
-* ### Replace _**"/server/datahandler.js"**_ with [this](https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph/blob/main/datahandler.js) version.
-* (It adds 4 lines of code required for the plugin to function.)
+- TEF radio with latest **TEF6686_ESP32** beta firmware (v2.11.8) available from the FMDX.org Discord server   
+or
+- TEF module with latest **FM-DX-Tuner** firmware by PE5PVB
 
 ---
 
@@ -21,7 +16,22 @@ This plugin scans the FM radio band in under 1.5 seconds, then displayed in a sp
 * Login to Adminstrator Panel and enable plugin
 * Server-side configuration is stored in `SpectrumGraph.json`
 
-### BETA version
+v1.0.0
+------
+* Official release
+
+<details>
+  <summary>BETA history</summary>
+
+v1.0.0b10
+------
+* Added tooltips
+* Backend code improvements
+
+v1.0.0b9
+--------
+* Fixed webpage movement while using mouse scroll wheel
+* Fixed tooltip element alignment
 
 v1.0.0b8
 --------
@@ -59,3 +69,5 @@ v1.0.0b2
 v1.0.0b1
 --------
 * First beta release
+
+</details>
