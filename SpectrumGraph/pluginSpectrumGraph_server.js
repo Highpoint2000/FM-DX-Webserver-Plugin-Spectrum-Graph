@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.0.0 by AAD
+    Spectrum Graph v1.1.0 by AAD
     Server-side code
 */
 
@@ -45,9 +45,12 @@ const defaultConfig = {
     tuningStepSize: 100
 };
 
+// Order of keys in configuration file
+const configKeyOrder = ['retryDelay', 'tuningRange', 'tuningStepSize'];
+
 // Function to ensure the folder and file exist
 function checkConfigFile() {
-    // Check if the plugins_configs folder exists
+    // Check if plugins_configs folder exists
     if (!fs.existsSync(configFolderPath)) {
         logInfo(`${pluginName}: Creating plugins_configs folder...`);
         fs.mkdirSync(configFolderPath, { recursive: true }); // Create the folder recursively if needed
@@ -56,22 +59,7 @@ function checkConfigFile() {
     // Check if json file exists
     if (!fs.existsSync(configFilePath)) {
         logInfo(`${pluginName}: Creating default SpectrumGraph.json file...`);
-        // Create the JSON file with default content and custom formatting
-        const defaultConfig = {
-            retryDelay: ['10'],
-            tuningRange: ['0'],
-            tuningStepSize: ['100']
-        };
-
-        // Manually format the JSON with the desired structure
-        const formattedConfig = `{
-    "retryDelay": ${defaultConfig.retryDelay.map(value => `${value}`).join(', ')},
-    "tuningRange": ${defaultConfig.tuningRange.map(value => `${value}`).join(', ')},
-    "tuningStepSize": ${defaultConfig.tuningStepSize.map(value => `${value}`).join(', ')}
-}`;
-
-        // Write the formatted JSON to the file
-        fs.writeFileSync(configFilePath, formattedConfig);
+        saveDefaultConfig(); // Save default configuration
     }
 }
 
@@ -83,12 +71,28 @@ function loadConfigFile(isReloaded) {
     try {
         if (fs.existsSync(configFilePath)) {
             const configContent = fs.readFileSync(configFilePath, 'utf-8');
-            const config = JSON.parse(configContent);
+            let config = JSON.parse(configContent);
+
+            let configModified = false;
+
+            // Check and add missing options with default values
+            for (let key in defaultConfig) {
+                if (!(key in config)) {
+                    logInfo(`${pluginName}: Missing ${key} in config. Adding default value.`);
+                    config[key] = defaultConfig[key]; // Add missing keys with default value
+                    configModified = true; // Mark as modified
+                }
+            }
 
             // Ensure variables are numbers, else fallback to defaults
             retryDelay = !isNaN(Number(config.retryDelay)) ? Number(config.retryDelay) : defaultConfig.retryDelay;
             tuningRange = !isNaN(Number(config.tuningRange)) ? Number(config.tuningRange) : defaultConfig.tuningRange;
             tuningStepSize = !isNaN(Number(config.tuningStepSize)) ? Number(config.tuningStepSize) : defaultConfig.tuningStepSize;
+
+            // Save the updated config if there were any modifications
+            if (configModified) {
+                saveUpdatedConfig(config);
+            }
 
             logInfo(`${pluginName}: Configuration ${isReloaded || ''}loaded successfully.`);
         } else {
@@ -109,6 +113,20 @@ function saveDefaultConfig() {
     }
     fs.writeFileSync(configFilePath, formattedConfig);
     loadConfigFile(); // Reload variables
+}
+
+// Function to save updated configuration after modification
+function saveUpdatedConfig(config) {
+    // Create a new object with keys in the specified order
+    const orderedConfig = {};
+    configKeyOrder.forEach(key => {
+        if (key in config) {
+            orderedConfig[key] = config[key];
+        }
+    });
+
+    const formattedConfig = JSON.stringify(orderedConfig, null, 4); // Pretty print with 4 spaces
+    fs.writeFileSync(configFilePath, formattedConfig); // Save updated config to file
 }
 
 // Function to watch the configuration file for changes
@@ -250,6 +268,101 @@ async function ExtraWebSocket() {
 ExtraWebSocket();
 TextWebSocket();
 
+// ************************************* datahandler code
+// Intercepted U and Z data storage
+let interceptedUData = null;
+let interceptedZData = null;
+
+// Wrapper to intercept 'U' data
+const originalHandleData = datahandlerReceived.handleData;
+
+datahandlerReceived.handleData = function (wss, receivedData, rdsWss) {
+    const receivedLines = receivedData.split('\n');
+
+    for (const receivedLine of receivedLines) {
+        if (receivedLine.startsWith('U')) {
+            interceptedUData = receivedLine.substring(1); // Store 'U' data
+            datahandlerReceived.dataToSend.sd = interceptedUData; // Update dataToSend.sd
+            if (antennaSwitch) datahandlerReceived.dataToSend[`sd${antennaCurrent}`] = interceptedUData; // Update sd0, sd1, sd2, sd3
+            break;
+        }
+        if (receivedLine.startsWith('Z')) {
+            interceptedZData = receivedLine.substring(1); // Store 'Z' data
+            datahandlerReceived.dataToSend.ad = interceptedZData; // Update dataToSend.ad
+            if (antennaSwitch) antennaCurrent = Number(interceptedZData);
+
+            let uValueNew = null;
+            
+            if (antennaSwitch && datahandlerReceived.dataToSend[`sd${antennaCurrent}`]) uValueNew = datahandlerReceived.dataToSend[`sd${antennaCurrent}`];
+            
+            if (uValueNew !== null) {
+                let uValue = uValueNew;
+
+                // Remove trailing comma and space in TEF radio firmware
+                if (uValue && uValue.endsWith(', ')) {
+                    uValue = uValue.slice(0, -2);
+                }
+
+                // Possibly interrupted
+                if (uValue && uValue.endsWith(',')) {
+                    stopScanning(false);
+                    uValue = null;
+                }
+
+                if (uValue !== null) { // Ensure uValue is not null before splitting
+                    //logInfo(`Spectrum Graph: Spectrum scan (${(tuningLowerLimitScan / 1000)}-${(tuningUpperLimitScan / 1000)} MHz) complete for Ant${antennaCurrent}.`);
+
+                    // Split the response into pairs and process each one
+                    sigArray = uValue.split(',').map(pair => {
+                        const [freq, sig] = pair.split('=');
+                        return { freq: (freq / 1000).toFixed(2), sig: parseFloat(sig).toFixed(1) };
+                    });
+
+                    stopScanning(true);
+
+                    const messageClient = JSON.stringify({
+                        type: 'sigArray',
+                        value: sigArray,
+                    });
+                    extraSocket.send(messageClient);
+                } else {
+                    logInfo("Spectrum Graph: uValue is null or empty, skipping further processing.");
+                }
+            }
+            break;
+        }
+    }
+
+    // Call original handleData function
+    originalHandleData(wss, receivedData, rdsWss);
+};
+// *************************************
+
+// Configure antennas
+let antennaCurrent; // Will remain 'undefined' if antenna switch is disabled
+let antennaSwitch = false;
+let antennaResponse = { enabled: false };
+if (config.antennas) antennaResponse = config.antennas;
+
+if (antennaResponse.enabled) { // Continue if 'enabled' is true
+  antennaSwitch = true;
+  antennaCurrent = 0; // Default antenna
+  const antennas = ['ant1', 'ant2', 'ant3', 'ant4'];
+
+  let antennaStatus = {};
+
+  antennas.forEach(ant => {
+    antennaStatus[ant] = antennaResponse[ant].enabled; // antennaResponse.antX.enabled set to true or false
+  });
+
+  // Assign null to antennas enabled
+  [1, 2, 3, 4].forEach((i) => {
+    if (antennaResponse[`ant${i}`].enabled) {
+      datahandlerReceived.dataToSend[`sd${i - 1}`] = null; // Assign null value to enabled antennas
+    }
+  });
+}
+
 // Function for first run
 function waitForTextSocket(maxWaitTime = 30000) {
     const startTime = Date.now();
@@ -272,8 +385,38 @@ function waitForTextSocket(maxWaitTime = 30000) {
 
 waitForTextSocket()
     .then((value) => {
+      let initialDelay = 5000;
       logInfo(`Spectrum Graph: textSocket is defined, preparing first run...`);
-      setTimeout(() => restartScan('scan'), 8000); // First run
+      setTimeout(() => restartScan('scan'), initialDelay); // First run
+
+      if (antennaResponse.enabled) {
+          // antennaResponse.ant1.enabled is first antenna so can be skipped
+
+          if (antennaResponse.ant2.enabled) {
+            setTimeout(() => sendCommandToClient('Z1'), initialDelay + 3000);
+            setTimeout(() => restartScan('scan'), initialDelay + 3600);
+          } else {
+            setTimeout(() => sendCommandToClient('Z0'), initialDelay + 3600);
+            return;
+          }
+            
+          if (antennaResponse.ant3.enabled) {
+            setTimeout(() => sendCommandToClient('Z2'), initialDelay + 6200);
+            setTimeout(() => restartScan('scan'), initialDelay + 6800);
+          } else {
+            setTimeout(() => sendCommandToClient('Z0'), initialDelay + 6800);
+            return;
+          }
+
+          if (antennaResponse.ant4.enabled) {
+            setTimeout(() => sendCommandToClient('Z3'), initialDelay + 9400);
+            setTimeout(() => restartScan('scan'), initialDelay + 10000);
+          } else {
+            setTimeout(() => sendCommandToClient('Z0'), initialDelay + 10000);
+            return;
+          }
+      }
+
     })
     .catch(() => {});
 
@@ -331,6 +474,8 @@ function waitForServer() {
 waitForServer();
 
 function startScan(command) {
+    if (isScanning) return;
+
     // Begin scan
     datahandlerReceived.dataToSend.sd = null;
 
@@ -369,8 +514,8 @@ function startScan(command) {
           tuningUpperLimitOffset = 0;
       }
 
-      // Limit scan to either 64-88 MHz or 88-108 MHz 
-      if ((currentFrequency * 1000) < 86000 && tuningUpperLimitScan > 88000) tuningUpperLimitScan = 88000;
+      // Limit scan to either 64-86 MHz or 88-108 MHz 
+      if ((currentFrequency * 1000) < 86000 && tuningUpperLimitScan > 86000) tuningUpperLimitScan = 86000;
       if ((currentFrequency * 1000) >= 86000 && tuningLowerLimitScan < 86000) tuningLowerLimitScan = 86000;
 
       // The magic happens here
@@ -381,23 +526,10 @@ function startScan(command) {
     }
     logInfo(`Spectrum Graph: Spectral commands sent (IP: ${ipAddress})`);
 
-    // Intercepted U Data Storage
-    let interceptedUData = null;
-
-    // Wrapper to intercept 'U' data
-    const originalHandleData = datahandlerReceived.handleData;
-    datahandlerReceived.handleData = function (wss, receivedData, rdsWss) {
-        const receivedLines = receivedData.split('\n');
-        for (const receivedLine of receivedLines) {
-            if (receivedLine.startsWith('U')) {
-                interceptedUData = receivedLine.substring(1); // Store 'U' data
-                datahandlerReceived.dataToSend.sd = interceptedUData; // Update dataToSend.sd
-            }
-        }
-
-        // Call original handleData function
-        originalHandleData(wss, receivedData, rdsWss);
-    };
+    // Reset U data before receiving new data
+    interceptedUData = null;
+    interceptedZData = null;
+    sigArray = [];
 
     // Wait for U value using async
     async function waitForUValue(timeout = 10000, interval = 40) {
@@ -432,7 +564,7 @@ function startScan(command) {
             //console.log(uValue);
 
             const completeTime = ((Date.now() - scanStartTime) / 1000).toFixed(1); // Calculate total time
-            logInfo(`Spectrum Graph: Spectrum scan (${(tuningLowerLimitScan / 1000)}-${(tuningUpperLimitScan / 1000)} MHz) complete in ${completeTime} seconds.`);
+            logInfo(`Spectrum Graph: Spectrum scan (${(tuningLowerLimitScan / 1000)}-${(tuningUpperLimitScan / 1000)} MHz) for Ant${antennaCurrent} complete in ${completeTime} seconds.`);
 
             // Split the response into pairs and process each one
             sigArray = uValue.split(',').map(pair => {
@@ -474,7 +606,5 @@ function restartScan(command) {
     lastRestartTime = now;
 
     // Restart scan
-    sigArray = [];
-    sdValue = null;
-    if (!isScanning) setTimeout(() => startScan(command), 40);
+    if (!isScanning) setTimeout(() => startScan(command), 20);
 }

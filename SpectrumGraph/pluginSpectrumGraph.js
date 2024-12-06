@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.0.0 by AAD
+    Spectrum Graph v1.1.0 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 */
 
@@ -14,11 +14,10 @@ const useButtonSpacingBetweenCanvas = true;   // Other plugins are likely to ove
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const pluginVersion = '1.0.0';
+const pluginVersion = '1.1.0';
 
 // const variables
 const dataFrequencyElement = document.getElementById('data-frequency');
-const xOffset = 30;
 const drawGraphDelay = 10;
 const canvasHeightSmall = 120;
 const canvasHeightLarge = 175;
@@ -28,10 +27,14 @@ let dataFrequencyValue;
 let isCanvasHovered = false; // Used for mouse scoll wheel
 let isGraphOpen = false;
 let isSpectrumOn = false;
-let ipAddress = '0';
+let ipAddress = 'blocked';
+let antennaCurrent = 0;
+let xOffset = 30;
 let sigArray = [];
 let enableSmoothing = localStorage.getItem('enableSpectrumGraphSmoothing') === 'true'; // Smooths the graph edges
 let fixedVerticalGraph = localStorage.getItem('enableSpectrumGraphFixedVerticalGraph') === 'true'; // Fixed or dynamic vertical graph based on peak signal strength
+let signalText = localStorage.getItem('signalUnit');
+let sigOffset, xSigOffset, sigDesc, prevSignalText;
 let removeUpdateTextTimeout;
 let updateText;
 let wsSendSocket;
@@ -82,7 +85,7 @@ async function setupSendSocket() {
             };
 
             wsSendSocket.onclose = (event) => {
-                console.log(`Spectrum Graph: WebSocket closed:`, event);
+                //console.log(`Spectrum Graph: WebSocket closed:`, event);
                 setTimeout(setupSendSocket, 5000); // Reconnect after 5 seconds
             };
         } catch (error) {
@@ -128,6 +131,23 @@ fetchFirstLine().then(version => {
     }
 });
 
+// Signal units
+prevSignalText = signalText;
+function signalUnits() {
+    signalText = localStorage.getItem('signalUnit');
+    switch (signalText) {
+        case 'dbuv': sigOffset = 11; xOffset = 30; xSigOffset = 20; sigDesc = 'dBµV'; break;
+        case 'dbm': sigOffset = 120; xOffset = 34; xSigOffset = 32; sigDesc = 'dBm'; break;
+        default: sigOffset = 0; xOffset = 30; xSigOffset = 20; sigDesc = 'dBf';
+    }
+    if (signalText !== prevSignalText) {
+      drawGraph();
+      console.log(`Spectrum Graph: Signal unit changed.`);
+    }
+    prevSignalText = signalText;
+}
+setInterval(signalUnits, 3000);
+
 // Create scan button to refresh graph
 function ScanButton() {
     // Remove any existing instances of button
@@ -140,19 +160,21 @@ function ScanButton() {
     spectrumButton.setAttribute('aria-label', 'Spectrum Graph Scan');
     spectrumButton.classList.add('rectangular-spectrum-button', 'tooltip');
     spectrumButton.setAttribute('data-tooltip', 'Perform manual scan');
-    spectrumButton.innerHTML = '<i class="fa-solid fa-magnifying-glass"></i>';
+    spectrumButton.innerHTML = '<i class="fa-solid fa-rotate"></i>';
 
     // Add event listener
-    spectrumButton.addEventListener('click', () => {
-        const message = JSON.stringify({
-            type: 'spectrum-graph',
-            value: {
-                status: 'scan',
-                ip: ipAddress,
-            },
+    if (isTuningAllowed) {
+        spectrumButton.addEventListener('click', () => {
+            const message = JSON.stringify({
+                type: 'spectrum-graph',
+                value: {
+                    status: 'scan',
+                    ip: ipAddress,
+                },
+            });
+            if (wsSendSocket) wsSendSocket.send(message);
         });
-        if (wsSendSocket) wsSendSocket.send(message);
-    });
+    }
 
     // Locate canvas and its parent container
     const canvas = document.getElementById('sdr-graph');
@@ -394,7 +416,7 @@ function insertUpdateText(updateText) {
     // Style the text
     updateTextElement.style.position = 'absolute';
     updateTextElement.style.top = '32px';
-    updateTextElement.style.left = '36px';
+    updateTextElement.style.left = '40px';
     updateTextElement.style.zIndex = '10';
     updateTextElement.style.color = 'var(--color-5-transparent)';
     updateTextElement.style.fontSize = '14px';
@@ -433,12 +455,34 @@ function insertUpdateText(updateText) {
     resetUpdateTextTimeout();
 }
 
+// ****************
+// Who is the user?
 fetch('https://api.ipify.org?format=json')
     .then((response) => response.json())
     .then((data) => {
         ipAddress = data.ip;
     })
-    .catch((error) => console.error('Error fetching IP:', error));
+    .catch((error) => console.error('Spectrum Graph error fetching IP:', error));
+
+// Check if administrator code
+var isTuneAuthenticated = false;
+var isTunerLocked = false;
+var isTuningAllowed = false;
+
+document.addEventListener('DOMContentLoaded', () => {
+    checkAdminMode();
+});
+
+function checkAdminMode() {
+    const bodyText = document.body.textContent || document.body.innerText;
+    isTunerLocked = !!document.querySelector('.fa-solid.fa-key.pointer.tooltip') || !!document.querySelector('.fa-solid.fa-lock.pointer.tooltip');
+    isTuneAuthenticated = bodyText.includes("You are logged in as an administrator.") || bodyText.includes("You are logged in as an adminstrator.") ||bodyText.includes("You are logged in and can control the receiver.");
+    if ((isTunerLocked && isTuneAuthenticated) || (!isTunerLocked && !isTuneAuthenticated)) isTuningAllowed = true;
+    if (isTuneAuthenticated) {
+      console.log(`Spectrum Graph: Logged in as administrator`);
+    }
+}
+// ****************
 
 // Fetch any available data on page load
 async function initializeGraph() {
@@ -451,9 +495,12 @@ async function initializeGraph() {
 
         const data = await response.json();
 
+        // Switch to data of current antenna
+        if (data.ad && data.sd) data.sd = data[`sd${data.ad}`];
+
         // Check if `sd` exists
         if (data.sd && data.sd.trim() !== '') {
-            console.log(`Spectrum Graph found data available on page load.`);
+            console.log(`Spectrum Graph data found for antenna ${data.ad} on page load.`);
             if (data.sd.length > 0) {
 
                 // Remove trailing comma and space in TEF radio firmware
@@ -638,6 +685,8 @@ function toggleSpectrum() {
     // Do not proceed to open canvas if signal canvas is hidden
     if (!document.querySelector("#signal-canvas")?.offsetParent && !isSpectrumOn) return;
 
+    signalText = localStorage.getItem('signalUnit');
+
     const SpectrumButton = document.getElementById('spectrum-graph-button');
     const ButtonsContainer = document.querySelector('.download-buttons-container');
     const antennaImage = document.querySelector('#antenna'); // Ensure ID 'antenna' is correct
@@ -683,8 +732,8 @@ function toggleSpectrum() {
             antennaImage.style.visibility = 'visible';
         }
     }
+    signalUnits();
 }
-
 
 // Observe any frequency changes
 function observeFrequency() {
@@ -793,7 +842,7 @@ function initializeCanvasInteractions() {
       // Position and display tooltip
       tooltip.style.left = `${tooltipX}px`;
       tooltip.style.top = `${tooltipY - 30}px`; // Position above graph point
-      tooltip.textContent = ` ${freq.toFixed(1)} MHz, ${signalValue.toFixed(0)} dBf `;
+      tooltip.textContent = ` ${freq.toFixed(1)} MHz, ${signalValue.toFixed(0) - sigOffset} ${sigDesc} `;
       tooltip.style.visibility = 'visible';
     }
   }
@@ -879,18 +928,23 @@ function getBackgroundColor(element) {
     return window.getComputedStyle(element).backgroundColor;
 }
 const wrapperOuter = document.getElementById('wrapper-outer');
-let currentBackgroundColor = getBackgroundColor(wrapperOuter);
-const observer = new MutationObserver(() => {
-    const newColor = getBackgroundColor(wrapperOuter);
-    if (newColor !== currentBackgroundColor) {
-        setTimeout(() => {
-            console.log(`Spectrum Graph new background colour.`);
-            setTimeout(drawGraph, drawGraphDelay);
-        }, 400);
-    }
+
+$(window).on('load', function() {
+    setTimeout(() => {
+        let currentBackgroundColor = getBackgroundColor(wrapperOuter);
+        const observer = new MutationObserver(() => {
+            const newColor = getBackgroundColor(wrapperOuter);
+            if (newColor !== currentBackgroundColor) {
+                setTimeout(() => {
+                    console.log(`Spectrum Graph new background colour.`);
+                    setTimeout(drawGraph, drawGraphDelay);
+                }, 400);
+            }
+        });
+        const config = { attributes: true };
+        observer.observe(wrapperOuter, config);
+    }, 1000);
 });
-const config = { attributes: true };
-observer.observe(wrapperOuter, config);
 
 // Draw graph
 function drawGraph() {
@@ -995,7 +1049,13 @@ function drawGraph() {
   let labels = [];
   for (let sig = 0; sig <= maxSig; sig += sigLabelStep) {
     const y = height - 20 - sig * yScale;
-    if (sig) ctx.fillText(sig.toFixed(0), (xOffset - 20), y + 3);
+    if (signalText === 'dbm' && (sig - sigOffset) >= -99) {
+      if (sig) ctx.fillText((sig - sigOffset).toFixed(0), ((xOffset - xSigOffset) + 6.5), y + 3); // dBm spacing
+    } else if (signalText === 'dbuv') {
+      if (sig) ctx.fillText(((sig - sigOffset) + 1).toFixed(0), (xOffset - xSigOffset), y + 3); // dBuV even numbering
+    } else {
+      if (sig) ctx.fillText((sig - sigOffset).toFixed(0), (xOffset - xSigOffset), y + 3); // dBf
+    }
     labels.push(sig); // Store labeled values
   }
 
