@@ -59,8 +59,11 @@ v1.0.0b5
 
 v1.0.0b4
 --------
-* Added configurable graph smoothing option
 * Fixed slight flicker that might occur
+
+v1.0.0b3
+--------
+* Added configurable graph smoothing option
 
 v1.0.0b2
 --------
