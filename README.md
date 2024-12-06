@@ -15,6 +15,7 @@ or
 * Restart FM-DX Webserver if required
 * Login to Adminstrator Panel and enable plugin
 * Server-side configuration is stored in `SpectrumGraph.json`
+* Client-side configuration located in `SpectrumGraph.js`
 
 v1.0.0
 ------
