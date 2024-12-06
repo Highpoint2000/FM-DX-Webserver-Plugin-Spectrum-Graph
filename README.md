@@ -19,6 +19,13 @@ or
 * Server-side configuration is stored in `\plugins_configs\SpectrumGraph.json`
 * Client-side configuration located in `SpectrumGraph.js`
 
+v1.1.0
+------
+* Individual band scans stored for each antenna
+* Signal unit matches user preference
+* Missing options in `SpectrumGraph.json` are automatically added
+* Fixed backend code that was sending commands multiple times
+
 v1.0.0
 ------
 * Official release
