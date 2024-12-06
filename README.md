@@ -16,7 +16,7 @@ or
 * Transfer `SpectrumGraph` folder, and `SpectrumGraph.js` to FM-DX Webserver `plugins` folder
 * Restart FM-DX Webserver if required
 * Login to Adminstrator Panel and enable plugin
-* Server-side configuration is stored in `SpectrumGraph.json`
+* Server-side configuration is stored in `\plugins_configs\SpectrumGraph.json`
 * Client-side configuration located in `SpectrumGraph.js`
 
 v1.0.0
