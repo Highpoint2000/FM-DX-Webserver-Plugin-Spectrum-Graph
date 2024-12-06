@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.0.0b9 by AAD
+    Spectrum Graph v1.0.0 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 */
 
@@ -9,20 +9,12 @@
 
 const checkUpdates = true;                    // Checks online if a new version is available
 const borderlessTheme = true;                 // Background and text colours match FM-DX Webserver theme
-const enableMouseScrollWheel = true;          // Use the mouse scroll wheel to tune
+const enableMouseScrollWheel = true;          // Allow the mouse scroll wheel to tune inside the graph
 const useButtonSpacingBetweenCanvas = true;   // Other plugins are likely to override this if set to false
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const pluginVersion = '1.0.0b9';
-
-// Create the WebSocket connection
-const currentURL = new URL(window.location.href);
-const WebserverURL = currentURL.hostname;
-const WebserverPath = currentURL.pathname.replace(/setup/g, '');
-const WebserverPORT = currentURL.port || (currentURL.protocol === 'https:' ? '443' : '80');
-const protocol = currentURL.protocol === 'https:' ? 'wss:' : 'ws:';
-const WEBSOCKET_URL = `${protocol}//${WebserverURL}:${WebserverPORT}${WebserverPath}data_plugins`;
+const pluginVersion = '1.0.0';
 
 // const variables
 const dataFrequencyElement = document.getElementById('data-frequency');
@@ -38,11 +30,19 @@ let isGraphOpen = false;
 let isSpectrumOn = false;
 let ipAddress = '0';
 let sigArray = [];
-let enableSmoothing = localStorage.getItem('enableSpectrumGraphSmoothing') === 'true'; // Smoothes the graph edges
+let enableSmoothing = localStorage.getItem('enableSpectrumGraphSmoothing') === 'true'; // Smooths the graph edges
 let fixedVerticalGraph = localStorage.getItem('enableSpectrumGraphFixedVerticalGraph') === 'true'; // Fixed or dynamic vertical graph based on peak signal strength
 let removeUpdateTextTimeout;
 let updateText;
 let wsSendSocket;
+
+// Create the WebSocket connection
+const currentURL = new URL(window.location.href);
+const WebserverURL = currentURL.hostname;
+const WebserverPath = currentURL.pathname.replace(/setup/g, '');
+const WebserverPORT = currentURL.port || (currentURL.protocol === 'https:' ? '443' : '80');
+const protocol = currentURL.protocol === 'https:' ? 'wss:' : 'ws:';
+const WEBSOCKET_URL = `${protocol}//${WebserverURL}:${WebserverPORT}${WebserverPath}data_plugins`;
 
 // WebSocket to send request and receive response
 async function setupSendSocket() {
@@ -138,7 +138,8 @@ function ScanButton() {
     const spectrumButton = document.createElement('button');
     spectrumButton.id = 'spectrum-scan-button';
     spectrumButton.setAttribute('aria-label', 'Spectrum Graph Scan');
-    spectrumButton.classList.add('rectangular-spectrum-button');
+    spectrumButton.classList.add('rectangular-spectrum-button', 'tooltip');
+    spectrumButton.setAttribute('data-tooltip', 'Perform manual scan');
     spectrumButton.innerHTML = '<i class="fa-solid fa-magnifying-glass"></i>';
 
     // Add event listener
@@ -208,7 +209,8 @@ function SmoothingOnOffButton() {
     const smoothingOnOffButton = document.createElement('button');
     smoothingOnOffButton.id = 'smoothing-on-off-button';
     smoothingOnOffButton.setAttribute('aria-label', 'Toggle On/Off');
-    smoothingOnOffButton.classList.add('smoothing-on-off-button');
+    smoothingOnOffButton.classList.add('smoothing-on-off-button', 'tooltip');
+    smoothingOnOffButton.setAttribute('data-tooltip', 'Smooth graph edges');
     smoothingOnOffButton.innerHTML = '<i class="fa-solid fa-chart-area"></i>';
 
     // Button state (off by default)
@@ -277,7 +279,7 @@ function SmoothingOnOffButton() {
             font-size: 14px;
         }
         .smoothing-on-off-button.button-on {
-            filter: brightness(130%) contrast(110%);
+            filter: brightness(150%) contrast(110%);
             box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.5), 0 0 10px var(--color-5);
         }
     `;
@@ -297,7 +299,8 @@ function ToggleFixedOrDynamicButton() {
     const toggleFixedOrDynamicButton = document.createElement('button');
     toggleFixedOrDynamicButton.id = 'fixed-dynamic-on-off-button';
     toggleFixedOrDynamicButton.setAttribute('aria-label', 'Toggle On/Off');
-    toggleFixedOrDynamicButton.classList.add('fixed-dynamic-on-off-button');
+    toggleFixedOrDynamicButton.classList.add('fixed-dynamic-on-off-button', 'tooltip');
+    toggleFixedOrDynamicButton.setAttribute('data-tooltip', 'Toggle fixed/dynamic signal range');
     toggleFixedOrDynamicButton.innerHTML = '<i class="fa-solid fa-arrows-up-down"></i>';
 
     // Button state (off by default)
@@ -366,7 +369,7 @@ function ToggleFixedOrDynamicButton() {
             font-size: 14px;
         }
         .fixed-dynamic-on-off-button.button-on {
-            filter: brightness(130%) contrast(110%);
+            filter: brightness(150%) contrast(110%);
             box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.5), 0 0 10px var(--color-5);
         }
     `;
@@ -374,6 +377,7 @@ function ToggleFixedOrDynamicButton() {
     const styleElement = document.createElement('style');
     styleElement.innerHTML = buttonStyle;
     document.head.appendChild(styleElement);
+    initTooltips();
 }
 
 // Function to display update text
@@ -397,6 +401,8 @@ function insertUpdateText(updateText) {
     updateTextElement.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
     updateTextElement.style.padding = '4px 8px';
     updateTextElement.style.borderRadius = '5px';
+    updateTextElement.style.opacity = '1';
+    updateTextElement.addEventListener('mouseenter', () => { updateTextElement.style.opacity = '0.1'; });
 
     // Locate canvas container
     const canvas = document.getElementById('sdr-graph');
@@ -579,7 +585,6 @@ function displaySignalCanvas() {
     }
     const signalCanvas = document.getElementById('signal-canvas');
     if (signalCanvas) {
-		console.log('jaaa');
         signalCanvas.style.display = 'block';
     }
 }
@@ -592,10 +597,10 @@ function displaySdrGraph() {
         isGraphOpen = true;
         if (!borderlessTheme) canvas.style.border = "1px solid var(--color-3)";
         setTimeout(drawGraph, drawGraphDelay);
-		const signalCanvas = document.getElementById('signal-canvas');
-		if (signalCanvas) {
-			signalCanvas.style.display = 'none';
-		}
+        const signalCanvas = document.getElementById('signal-canvas');
+        if (signalCanvas) {
+          signalCanvas.style.display = 'none';
+        }
     }
     const loggingCanvas = document.getElementById('logging-canvas');
     if (loggingCanvas) {
@@ -612,8 +617,6 @@ function displaySdrGraph() {
     const ContainerAntenna = document.getElementById('Antenna');
     if (ContainerAntenna) {
         ContainerAntenna.style.display = 'none';
-        ButtonsContainer.style.marginLeft = "-20.5%";
-        ButtonsContainer.style.marginTop = "166px";
     }
     ScanButton();
 }

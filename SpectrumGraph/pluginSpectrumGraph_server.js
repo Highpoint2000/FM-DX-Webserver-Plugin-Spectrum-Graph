@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.0.0b9 by AAD
+    Spectrum Graph v1.0.0 by AAD
     Server-side code
 */
 
@@ -123,7 +123,7 @@ function watchConfigFile() {
     });
 }
 
-// Initialize the configuration system
+// Initialise the configuration system
 function initConfigSystem() {
     loadConfigFile(); // Load configuration values initially
     watchConfigFile(); // Start watching for changes
@@ -134,7 +134,7 @@ function initConfigSystem() {
     }
 }
 
-// Initialize the configuration system
+// Initialise the configuration system
 initConfigSystem();
 
 async function TextWebSocket(messageData) {
@@ -273,7 +273,7 @@ function waitForTextSocket(maxWaitTime = 30000) {
 waitForTextSocket()
     .then((value) => {
       logInfo(`Spectrum Graph: textSocket is defined, preparing first run...`);
-      setTimeout(() => restartScan('scan'), 10000); // First run
+      setTimeout(() => restartScan('scan'), 8000); // First run
     })
     .catch(() => {});
 
@@ -381,15 +381,31 @@ function startScan(command) {
     }
     logInfo(`Spectrum Graph: Spectral commands sent (IP: ${ipAddress})`);
 
-    // Wait for sd value using async
-    async function waitForSdValue(timeout = 10000, interval = 40) {
-        startTime = Date.now();
+    // Intercepted U Data Storage
+    let interceptedUData = null;
 
-        while (Date.now() - startTime < timeout) {
-            let sdValue = datahandlerReceived.dataToSend.sd;
+    // Wrapper to intercept 'U' data
+    const originalHandleData = datahandlerReceived.handleData;
+    datahandlerReceived.handleData = function (wss, receivedData, rdsWss) {
+        const receivedLines = receivedData.split('\n');
+        for (const receivedLine of receivedLines) {
+            if (receivedLine.startsWith('U')) {
+                interceptedUData = receivedLine.substring(1); // Store 'U' data
+                datahandlerReceived.dataToSend.sd = interceptedUData; // Update dataToSend.sd
+            }
+        }
 
-            if (sdValue !== null && sdValue !== undefined) {
-                return sdValue; // Return when data is fetched
+        // Call original handleData function
+        originalHandleData(wss, receivedData, rdsWss);
+    };
+
+    // Wait for U value using async
+    async function waitForUValue(timeout = 10000, interval = 40) {
+        const waitStartTime = Date.now(); // Start of the waiting period
+
+        while (Date.now() - waitStartTime < timeout) {
+            if (interceptedUData !== null && interceptedUData !== undefined) {
+                return interceptedUData; // Return when data is fetched
             }
 
             await new Promise(resolve => setTimeout(resolve, interval)); // Wait for next check
@@ -400,39 +416,40 @@ function startScan(command) {
 
     (async () => {
         try {
-            let sdValue = await waitForSdValue();
+            const scanStartTime = Date.now(); // Start of the entire scan process
+            let uValue = await waitForUValue();
 
             // Remove trailing comma and space in TEF radio firmware
-            if (sdValue && sdValue.endsWith(', ')) {
-                sdValue = sdValue.slice(0, -2);
+            if (uValue && uValue.endsWith(', ')) {
+                uValue = uValue.slice(0, -2);
             }
 
             // Possibly interrupted
-            if (sdValue && sdValue.endsWith(',')) {
+            if (uValue && uValue.endsWith(',')) {
                 stopScanning(false);
-                sdValue = null;
+                uValue = null;
             }
-            //console.log(sdValue);
+            //console.log(uValue);
 
-            logInfo(`Spectrum Graph: Spectrum scan (${(tuningLowerLimitScan / 1000)} - ${(tuningUpperLimitScan / 1000)} MHz) complete in ${((Date.now() - startTime) / 1000).toFixed(1)} seconds.`);
+            const completeTime = ((Date.now() - scanStartTime) / 1000).toFixed(1); // Calculate total time
+            logInfo(`Spectrum Graph: Spectrum scan (${(tuningLowerLimitScan / 1000)}-${(tuningUpperLimitScan / 1000)} MHz) complete in ${completeTime} seconds.`);
 
             // Split the response into pairs and process each one
-            sigArray = sdValue.split(',').map(pair => {
+            sigArray = uValue.split(',').map(pair => {
                 const [freq, sig] = pair.split('=');
                 return { freq: (freq / 1000).toFixed(2), sig: parseFloat(sig).toFixed(1) };
             });
 
-            startTime = null;
             stopScanning(true);
             //console.log(sigArray);
 
             const messageClient = JSON.stringify({
-              type: 'sigArray',
-              value: sigArray
+                type: 'sigArray',
+                value: sigArray,
             });
             extraSocket.send(messageClient);
         } catch (error) {
-            logError(`Spectrum Graph failed to get 'dataToSend.sd' value, error:`, error.message);
+            logError(`Spectrum Graph failed to get 'U' value, error:`, error.message);
             stopScanning(true);
         }
     })();
