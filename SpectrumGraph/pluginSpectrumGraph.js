@@ -498,7 +498,7 @@ async function initializeGraph() {
         const data = await response.json();
 
         // Switch to data of current antenna
-        if (data.ad && data.sd) data.sd = data[`sd${data.ad}`];
+        if (data.ad && data.sd && (data.sd0 || data.sd1)) data.sd = data[`sd${data.ad}`];
 
         // Check if `sd` exists
         if (data.sd && data.sd.trim() !== '') {
