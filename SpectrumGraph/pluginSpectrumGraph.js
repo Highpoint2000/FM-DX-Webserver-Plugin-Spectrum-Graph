@@ -85,7 +85,9 @@ async function setupSendSocket() {
             };
 
             wsSendSocket.onclose = (event) => {
-                //console.log(`Spectrum Graph: WebSocket closed:`, event);
+                setTimeout(function() {
+                    console.log(`Spectrum Graph: WebSocket closed:`, event);
+                }, 400);
                 setTimeout(setupSendSocket, 5000); // Reconnect after 5 seconds
             };
         } catch (error) {
@@ -141,7 +143,7 @@ function signalUnits() {
         default: sigOffset = 0; xOffset = 30; xSigOffset = 20; sigDesc = 'dBf';
     }
     if (signalText !== prevSignalText) {
-      drawGraph();
+      setTimeout(drawGraph, drawGraphDelay);
       console.log(`Spectrum Graph: Signal unit changed.`);
     }
     prevSignalText = signalText;

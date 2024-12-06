@@ -514,7 +514,7 @@ function startScan(command) {
           tuningUpperLimitOffset = 0;
       }
 
-      // Limit scan to either 64-86 MHz or 88-108 MHz 
+      // Limit scan to either 64-86 MHz or 86-108 MHz 
       if ((currentFrequency * 1000) < 86000 && tuningUpperLimitScan > 86000) tuningUpperLimitScan = 86000;
       if ((currentFrequency * 1000) >= 86000 && tuningLowerLimitScan < 86000) tuningLowerLimitScan = 86000;
 
@@ -564,7 +564,7 @@ function startScan(command) {
             //console.log(uValue);
 
             const completeTime = ((Date.now() - scanStartTime) / 1000).toFixed(1); // Calculate total time
-            logInfo(`Spectrum Graph: Spectrum scan (${(tuningLowerLimitScan / 1000)}-${(tuningUpperLimitScan / 1000)} MHz) for Ant${antennaCurrent} complete in ${completeTime} seconds.`);
+            logInfo(`Spectrum Graph: Spectrum scan (${(tuningLowerLimitScan / 1000)}-${(tuningUpperLimitScan / 1000)} MHz) ${antennaResponse.enabled ? `for Ant. ${antennaCurrent} ` : ''}complete in ${completeTime} seconds.`);
 
             // Split the response into pairs and process each one
             sigArray = uValue.split(',').map(pair => {
