@@ -16,7 +16,7 @@ This plugin scans the FM radio band in under 1.5 seconds, then displayed in a sp
 > [!IMPORTANT]
 > TEF radio requires the latest **TEF6686_ESP32** beta firmware (v2.11.8) available from the FMDX.org Discord server   
 > or   
-> TEF module with latest **FM-DX-Tuner** firmware by PE5PVB.   
+> TEF module with latest **FM-DX-Tuner** firmware by kkonradpl.   
 
 v1.1.1
 ------
