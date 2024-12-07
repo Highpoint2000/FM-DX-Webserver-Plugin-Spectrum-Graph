@@ -1051,8 +1051,12 @@ function drawGraph() {
   let labels = [];
   for (let sig = 0; sig <= maxSig; sig += sigLabelStep) {
     const y = height - 20 - sig * yScale;
-    if (signalText === 'dbm' && (sig - sigOffset) >= -99) {
-      if (sig) ctx.fillText((sig - sigOffset).toFixed(0), ((xOffset - xSigOffset) + 6.5), y + 3); // dBm spacing
+    if (signalText === 'dbm') {
+      // dBm spacing
+      let tempDbfSig = (sig - sigOffset).toFixed(0);
+      // dBm
+      if (sig && tempDbfSig > -100) ctx.fillText(tempDbfSig, ((xOffset - xSigOffset) + 6.5), y + 3);
+      if (sig && tempDbfSig <= -100) ctx.fillText(tempDbfSig, ((xOffset - xSigOffset)), y + 3);
     } else if (signalText === 'dbuv') {
       // dBuV number spacing
       let tempDbuvSig = ((sig - sigOffset) + 1).toFixed(0);
@@ -1061,7 +1065,7 @@ function drawGraph() {
       if (sig && tempDbuvSig > 0 && tempDbuvSig < 10) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset) + 6.5, y + 3);
       if (sig && tempDbuvSig == 0) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset) + 5.5, y + 3);
       if (sig && tempDbuvSig < 0) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset) + 1.5, y + 3);
-    } else {
+    } else if (signalText === 'dbf') {
       let tempDbfSig = (sig - sigOffset).toFixed(0);
       // dBf
       if (sig && tempDbfSig >= 10) ctx.fillText(tempDbfSig, (xOffset - xSigOffset), y + 3);
