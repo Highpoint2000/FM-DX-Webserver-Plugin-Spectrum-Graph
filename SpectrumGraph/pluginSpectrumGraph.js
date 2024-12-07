@@ -996,7 +996,7 @@ function drawGraph() {
   }
 
   // Scaling factors
-  const xScale = (width - 30) / freqRange;
+  const xScale = (width - 35) / freqRange;
   const yScale = (height - 40) / maxSig;
 
   const colorText = getComputedStyle(document.documentElement).getPropertyValue('--color-5').trim();
