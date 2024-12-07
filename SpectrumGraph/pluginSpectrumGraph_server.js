@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.1.0 by AAD
+    Spectrum Graph v1.1.1 by AAD
     Server-side code
 */
 
@@ -25,7 +25,7 @@ let extraSocket, textSocket, textSocketLost, messageParsed, messageParsedTimeout
 let ipAddress = 'none';
 let currentFrequency = 0;
 let lastRestartTime = 0;
-let isScanning = false;
+let isScanRunning = false;
 let frequencySocket = null;
 let sigArray = [];
 
@@ -53,7 +53,7 @@ function checkConfigFile() {
     // Check if plugins_configs folder exists
     if (!fs.existsSync(configFolderPath)) {
         logInfo(`${pluginName}: Creating plugins_configs folder...`);
-        fs.mkdirSync(configFolderPath, { recursive: true }); // Create the folder recursively if needed
+        fs.mkdirSync(configFolderPath, { recursive: true }); // Create folder recursively if needed
     }
 
     // Check if json file exists
@@ -66,7 +66,7 @@ function checkConfigFile() {
 // Call function to ensure folder and file exist
 checkConfigFile();
 
-// Function to load the configuration file
+// Function to load configuration file
 function loadConfigFile(isReloaded) {
     try {
         if (fs.existsSync(configFilePath)) {
@@ -145,16 +145,13 @@ function watchConfigFile() {
 function initConfigSystem() {
     loadConfigFile(); // Load configuration values initially
     watchConfigFile(); // Start watching for changes
-    if (tuningRange) {
-      logInfo(`${pluginName} configuration: Retry Delay: ${retryDelay} seconds, Tuning Range: ${tuningRange} MHz, Tuning Steps: ${tuningStepSize} kHz`);
-    } else {
-      logInfo(`${pluginName} configuration: Retry Delay: ${retryDelay} seconds, Tuning Range: Unlimited MHz, Tuning Steps: ${tuningStepSize} kHz`);
-    }
+    logInfo(`${pluginName} configuration: Retry Delay: ${retryDelay} seconds, Tuning Range: ${tuningRange ? tuningRange + ' MHz' : 'Unlimited MHz'}, Tuning Steps: ${tuningStepSize} kHz`);
 }
 
 // Initialise the configuration system
 initConfigSystem();
 
+// Text WebSocket
 async function TextWebSocket(messageData) {
     if (!textSocket || textSocket.readyState === WebSocket.CLOSED) {
         try {
@@ -208,6 +205,7 @@ async function TextWebSocket(messageData) {
     }
 }
 
+// Extra WebSocket
 async function ExtraWebSocket() {
     if (!extraSocket || extraSocket.readyState === WebSocket.CLOSED) {
         try {
@@ -238,7 +236,7 @@ async function ExtraWebSocket() {
                     if (!messageParsedTimeout) {
                       if (message.type === 'spectrum-graph' && message.value?.status === 'scan') {
                           ipAddress = message.value?.ip.slice(0, 64) || 'unknown IP';
-                          if (!isScanning) restartScan('scan');
+                          if (!isScanRunning) restartScan('scan');
                       } else if (!message.value?.status === 'scan') {
                         logError(`Spectrum Graph unknown command received:`, message);
                       }
@@ -264,11 +262,9 @@ async function ExtraWebSocket() {
         }
     }
 }
-
 ExtraWebSocket();
 TextWebSocket();
 
-// ************************************* datahandler code
 // Intercepted U and Z data storage
 let interceptedUData = null;
 let interceptedZData = null;
@@ -276,6 +272,7 @@ let interceptedZData = null;
 // Wrapper to intercept 'U' data
 const originalHandleData = datahandlerReceived.handleData;
 
+// datahandler code
 datahandlerReceived.handleData = function (wss, receivedData, rdsWss) {
     const receivedLines = receivedData.split('\n');
 
@@ -305,20 +302,19 @@ datahandlerReceived.handleData = function (wss, receivedData, rdsWss) {
 
                 // Possibly interrupted
                 if (uValue && uValue.endsWith(',')) {
-                    stopScanning(false);
+                    isScanHalted(true);
                     uValue = null;
+                    setTimeout(() => {
+                        datahandlerReceived.dataToSend[`sd${antennaCurrent}`] = null; // Reset value to clear incomplete data
+                    }, 200);
                 }
 
                 if (uValue !== null) { // Ensure uValue is not null before splitting
-                    //logInfo(`Spectrum Graph: Spectrum scan (${(tuningLowerLimitScan / 1000)}-${(tuningUpperLimitScan / 1000)} MHz) complete for Ant${antennaCurrent}.`);
-
                     // Split the response into pairs and process each one
                     sigArray = uValue.split(',').map(pair => {
                         const [freq, sig] = pair.split('=');
                         return { freq: (freq / 1000).toFixed(2), sig: parseFloat(sig).toFixed(1) };
                     });
-
-                    stopScanning(true);
 
                     const messageClient = JSON.stringify({
                         type: 'sigArray',
@@ -326,8 +322,9 @@ datahandlerReceived.handleData = function (wss, receivedData, rdsWss) {
                     });
                     extraSocket.send(messageClient);
                 } else {
-                    logInfo("Spectrum Graph: uValue is null or empty, skipping further processing.");
+                    logInfo(`Spectrum Graph: Scan interrupted, invalid 'uValue' for Ant. ${antennaCurrent}, clearing bad data.`);
                 }
+            isScanHalted(true);
             }
             break;
         }
@@ -336,7 +333,6 @@ datahandlerReceived.handleData = function (wss, receivedData, rdsWss) {
     // Call original handleData function
     originalHandleData(wss, receivedData, rdsWss);
 };
-// *************************************
 
 // Configure antennas
 let antennaCurrent; // Will remain 'undefined' if antenna switch is disabled
@@ -474,7 +470,8 @@ function waitForServer() {
 waitForServer();
 
 function startScan(command) {
-    if (isScanning) return;
+    // Exit if scan is running
+    if (isScanRunning) return;
 
     // Begin scan
     datahandlerReceived.dataToSend.sd = null;
@@ -487,7 +484,9 @@ function startScan(command) {
         currentFrequency = tuningLowerLimit;
     }
 
-    stopScanning(false);
+    // Scan started
+    isScanHalted(false);
+
     if (textSocket) {
       tuningLowerLimitScan = Math.round(tuningLowerLimit * 1000);
       tuningUpperLimitScan = Math.round(tuningUpperLimit * 1000);
@@ -522,7 +521,7 @@ function startScan(command) {
       sendCommandToClient(`Sa${tuningLowerLimitScan - tuningLowerLimitOffset}`);
       sendCommandToClient(`Sb${tuningUpperLimitScan + tuningUpperLimitOffset}`);
       sendCommandToClient(`Sc${tuningStepSize}`);
-      sendCommandToClient(`S`);
+      sendCommandToClient('S');
     }
     logInfo(`Spectrum Graph: Spectral commands sent (IP: ${ipAddress})`);
 
@@ -558,8 +557,11 @@ function startScan(command) {
 
             // Possibly interrupted
             if (uValue && uValue.endsWith(',')) {
-                stopScanning(false);
+                isScanHalted(true);
                 uValue = null;
+                setTimeout(() => {
+                    datahandlerReceived.dataToSend.sd = null; // Reset value to clear incomplete data
+                }, 200);
             }
             //console.log(uValue);
 
@@ -572,7 +574,6 @@ function startScan(command) {
                 return { freq: (freq / 1000).toFixed(2), sig: parseFloat(sig).toFixed(1) };
             });
 
-            stopScanning(true);
             //console.log(sigArray);
 
             const messageClient = JSON.stringify({
@@ -581,17 +582,17 @@ function startScan(command) {
             });
             extraSocket.send(messageClient);
         } catch (error) {
-            logError(`Spectrum Graph failed to get 'U' value, error:`, error.message);
-            stopScanning(true);
+            logError(`Spectrum Graph scan interrupted, invalid 'U' value, error:`, error.message);
         }
+        isScanHalted(true);
     })();
 }
 
-function stopScanning(status) {
+function isScanHalted(status) {
   if (status) {
-    isScanning = false;
+    isScanRunning = false;
   } else {
-    isScanning = true;
+    isScanRunning = true;
   }
 }
 
@@ -606,5 +607,5 @@ function restartScan(command) {
     lastRestartTime = now;
 
     // Restart scan
-    if (!isScanning) setTimeout(() => startScan(command), 20);
+    if (!isScanRunning) setTimeout(() => startScan(command), 10);
 }

@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.1.0 by AAD
+    Spectrum Graph v1.1.1 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 */
 
@@ -139,7 +139,7 @@ function signalUnits() {
     signalText = localStorage.getItem('signalUnit');
     switch (signalText) {
         case 'dbuv': sigOffset = 11; xOffset = 30; xSigOffset = 20; sigDesc = 'dBµV'; break;
-        case 'dbm': sigOffset = 120; xOffset = 34; xSigOffset = 32; sigDesc = 'dBm'; break;
+        case 'dbm': sigOffset = 120; xOffset = 36; xSigOffset = 32; sigDesc = 'dBm'; break;
         default: sigOffset = 0; xOffset = 30; xSigOffset = 20; sigDesc = 'dBf';
     }
     if (signalText !== prevSignalText) {
@@ -996,7 +996,7 @@ function drawGraph() {
   }
 
   // Scaling factors
-  const xScale = (width - 35) / freqRange;
+  const xScale = (width - xOffset) / freqRange;
   const yScale = (height - 40) / maxSig;
 
   const colorText = getComputedStyle(document.documentElement).getPropertyValue('--color-5').trim();
@@ -1055,8 +1055,8 @@ function drawGraph() {
       // dBm spacing
       let tempDbfSig = (sig - sigOffset).toFixed(0);
       // dBm
-      if (sig && tempDbfSig > -100) ctx.fillText(tempDbfSig, ((xOffset - xSigOffset) + 6.5), y + 3);
-      if (sig && tempDbfSig <= -100) ctx.fillText(tempDbfSig, ((xOffset - xSigOffset)), y + 3);
+      if (sig && tempDbfSig > -100) ctx.fillText(tempDbfSig, ((xOffset - xSigOffset) + 8), y + 3);
+      if (sig && tempDbfSig <= -100) ctx.fillText(tempDbfSig, ((xOffset - xSigOffset)) + 1.5, y + 3);
     } else if (signalText === 'dbuv') {
       // dBuV number spacing
       let tempDbuvSig = ((sig - sigOffset) + 1).toFixed(0);
