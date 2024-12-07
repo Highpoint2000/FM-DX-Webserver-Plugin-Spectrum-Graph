@@ -14,7 +14,7 @@ const useButtonSpacingBetweenCanvas = true;   // Other plugins are likely to ove
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const pluginVersion = '1.1.0';
+const pluginVersion = '1.1.1';
 
 // const variables
 const dataFrequencyElement = document.getElementById('data-frequency');
