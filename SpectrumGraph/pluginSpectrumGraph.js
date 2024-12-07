@@ -1054,9 +1054,20 @@ function drawGraph() {
     if (signalText === 'dbm' && (sig - sigOffset) >= -99) {
       if (sig) ctx.fillText((sig - sigOffset).toFixed(0), ((xOffset - xSigOffset) + 6.5), y + 3); // dBm spacing
     } else if (signalText === 'dbuv') {
-      if (sig) ctx.fillText(((sig - sigOffset) + 1).toFixed(0), (xOffset - xSigOffset), y + 3); // dBuV even numbering
+      // dBuV number spacing
+      let tempDbuvSig = ((sig - sigOffset) + 1).toFixed(0);
+      // dBuV using +1 for even numbering
+      if (sig && tempDbuvSig >= 10) ctx.fillText(((sig - sigOffset) + 1).toFixed(0), (xOffset - xSigOffset), y + 3);
+      if (sig && tempDbuvSig > 0 && tempDbuvSig < 10) ctx.fillText(((sig - sigOffset) + 1).toFixed(0), (xOffset - xSigOffset) + 6.5, y + 3);
+      if (sig && tempDbuvSig == 0) ctx.fillText(((sig - sigOffset) + 1).toFixed(0), (xOffset - xSigOffset) + 5.5, y + 3);
+      if (sig && tempDbuvSig < 0) ctx.fillText(((sig - sigOffset) + 1).toFixed(0), (xOffset - xSigOffset) + 1.5, y + 3);
     } else {
-      if (sig) ctx.fillText((sig - sigOffset).toFixed(0), (xOffset - xSigOffset), y + 3); // dBf
+      let tempDbfSig = (sig - sigOffset).toFixed(0);
+      // dBf
+      if (sig && tempDbfSig >= 10) ctx.fillText((sig - sigOffset).toFixed(0), (xOffset - xSigOffset), y + 3);
+      if (sig && tempDbfSig > 0 && tempDbfSig < 10) if (sig) ctx.fillText((sig - sigOffset).toFixed(0), (xOffset - xSigOffset) + 6.5, y + 3);
+      if (sig && tempDbfSig == 0) ctx.fillText((sig - sigOffset).toFixed(0), (xOffset - xSigOffset) + 5.5, y + 3);
+      if (sig && tempDbfSig < 0) ctx.fillText((sig - sigOffset).toFixed(0), (xOffset - xSigOffset) + 1.5, y + 3);
     }
     labels.push(sig); // Store labeled values
   }
