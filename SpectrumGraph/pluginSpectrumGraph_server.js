@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.1.1 by AAD
+    Spectrum Graph v1.1.2 by AAD
     Server-side code
 */
 
@@ -13,21 +13,30 @@ const WebSocket = require('ws');
 
 // File imports
 const config = require('./../../config.json');
-const { logInfo, logError } = require('../../server/console');
+const { logInfo, logWarn, logError } = require('../../server/console');
 const datahandlerReceived = require('../../server/datahandler'); // To grab signal strength data
 
 // const variables
+const debug = false;
 const webserverPort = config.webserver.webserverPort || 8080;
 const externalWsUrl = `ws://127.0.0.1:${webserverPort}`;
 
 // let variables
 let extraSocket, textSocket, textSocketLost, messageParsed, messageParsedTimeout, startTime, tuningLowerLimitScan, tuningUpperLimitScan, tuningLowerLimitOffset, tuningUpperLimitOffset, debounceTimer;
-let ipAddress = 'none';
+let ipAddress = 'localhost';
+let BWradio = 0;
 let currentFrequency = 0;
+let initialDelay = 0;
 let lastRestartTime = 0;
+let nowTime = Date.now();
+let isFirstRun = true;
 let isScanRunning = false;
 let frequencySocket = null;
 let sigArray = [];
+
+// Check if module or radio firmware
+let isModule = true; // TEF module
+let checkFirmwareCommand = 'I';
 
 // Define paths used for config
 const rootDir = path.dirname(require.main.filename); // Locate directory where index.js is located
@@ -35,20 +44,22 @@ const configFolderPath = path.join(rootDir, 'plugins_configs');
 const configFilePath = path.join(configFolderPath, 'SpectrumGraph.json');
 
 // Default configuration
-let retryDelay = 10; // seconds
+let rescanDelay = 10; // seconds
 let tuningRange = 0; // MHz
 let tuningStepSize = 100; // kHz
+let tuningBandwidth = 56; // kHz
 
 const defaultConfig = {
-    retryDelay: 10,
+    rescanDelay: 10,
     tuningRange: 0,
-    tuningStepSize: 100
+    tuningStepSize: 100,
+    tuningBandwidth: 56
 };
 
 // Order of keys in configuration file
-const configKeyOrder = ['retryDelay', 'tuningRange', 'tuningStepSize'];
+const configKeyOrder = ['rescanDelay', 'tuningRange', 'tuningStepSize', 'tuningBandwidth'];
 
-// Function to ensure the folder and file exist
+// Function to ensure folder and file exist
 function checkConfigFile() {
     // Check if plugins_configs folder exists
     if (!fs.existsSync(configFolderPath)) {
@@ -62,8 +73,6 @@ function checkConfigFile() {
         saveDefaultConfig(); // Save default configuration
     }
 }
-
-// Call function to ensure folder and file exist
 checkConfigFile();
 
 // Function to load configuration file
@@ -84,10 +93,11 @@ function loadConfigFile(isReloaded) {
                 }
             }
 
-            // Ensure variables are numbers, else fallback to defaults
-            retryDelay = !isNaN(Number(config.retryDelay)) ? Number(config.retryDelay) : defaultConfig.retryDelay;
+            // Ensure variables are numbers or booleans
+            rescanDelay = !isNaN(Number(config.rescanDelay)) ? Number(config.rescanDelay) : defaultConfig.rescanDelay;
             tuningRange = !isNaN(Number(config.tuningRange)) ? Number(config.tuningRange) : defaultConfig.tuningRange;
             tuningStepSize = !isNaN(Number(config.tuningStepSize)) ? Number(config.tuningStepSize) : defaultConfig.tuningStepSize;
+            tuningBandwidth = !isNaN(Number(config.tuningBandwidth)) ? Number(config.tuningBandwidth) : defaultConfig.tuningBandwidth;
 
             // Save the updated config if there were any modifications
             if (configModified) {
@@ -105,7 +115,7 @@ function loadConfigFile(isReloaded) {
     }
 }
 
-// Function to save the default configuration file
+// Function to save default configuration file
 function saveDefaultConfig() {
     const formattedConfig = JSON.stringify(defaultConfig, null, 4); // Pretty print with 4 spaces
     if (!fs.existsSync(configFolderPath)) {
@@ -117,7 +127,7 @@ function saveDefaultConfig() {
 
 // Function to save updated configuration after modification
 function saveUpdatedConfig(config) {
-    // Create a new object with keys in the specified order
+    // Create a new object with keys in specified order
     const orderedConfig = {};
     configKeyOrder.forEach(key => {
         if (key in config) {
@@ -129,29 +139,28 @@ function saveUpdatedConfig(config) {
     fs.writeFileSync(configFilePath, formattedConfig); // Save updated config to file
 }
 
-// Function to watch the configuration file for changes
+// Function to watch configuration file for changes
 function watchConfigFile() {
     fs.watch(configFilePath, (eventType) => {
         if (eventType === 'change') {
             clearTimeout(debounceTimer); // Clear any existing debounce timer
             debounceTimer = setTimeout(() => {
                 loadConfigFile('re');
-            }, 1000);
+            }, 800);
         }
     });
 }
 
-// Initialise the configuration system
+// Initialise configuration system
 function initConfigSystem() {
     loadConfigFile(); // Load configuration values initially
-    watchConfigFile(); // Start watching for changes
-    logInfo(`${pluginName} configuration: Retry Delay: ${retryDelay} seconds, Tuning Range: ${tuningRange ? tuningRange + ' MHz' : 'Unlimited MHz'}, Tuning Steps: ${tuningStepSize} kHz`);
+    watchConfigFile(); // Monitor for changes
+    logInfo(`${pluginName}: Rescan Delay: ${rescanDelay} sec, Tuning Range: ${tuningRange ? tuningRange + ' MHz' : 'Full MHz'}, Tuning Steps: ${tuningStepSize} kHz, Bandwidth: ${tuningBandwidth} kHz`);
 }
 
-// Initialise the configuration system
 initConfigSystem();
 
-// Text WebSocket
+// Function for 'text' WebSocket
 async function TextWebSocket(messageData) {
     if (!textSocket || textSocket.readyState === WebSocket.CLOSED) {
         try {
@@ -160,29 +169,32 @@ async function TextWebSocket(messageData) {
             textSocket.onopen = () => {
                 logInfo(`Spectrum Graph connected to WebSocket`);
 
+                // Launch startup antenna sequence 
+                waitForTextSocket();
+
                 textSocket.onmessage = (event) => {
                     try {
-                        // Parse the incoming message data
+                        // Parse incoming message data
                         const messageData = JSON.parse(event.data);
-                        //console.log(messageData);
+                        // console.log(messageData);
 
                         if (!isSerialportAlive || isSerialportRetrying) {
-                          if (textSocketLost) {
-                            clearTimeout(textSocketLost);
-                          }
-
-                          textSocketLost = setTimeout(() => {
-                            // WebSocket reconnection required after serialport connection loss
-                            logInfo(`Spectrum Graph connection lost, creating new WebSocket.`);
-                            if (textSocket) {
-                              try {
-                                textSocket.close(1000, 'Normal closure');
-                              } catch (error) {
-                                logInfo(`Spectrum Graph error closing WebSocket:`, error);
-                              }
+                            if (textSocketLost) {
+                                clearTimeout(textSocketLost);
                             }
-                            textSocketLost = null;
-                          }, 10000);
+
+                            textSocketLost = setTimeout(() => {
+                                // WebSocket reconnection required after serialport connection loss
+                                logInfo(`Spectrum Graph connection lost, creating new WebSocket.`);
+                                if (textSocket) {
+                                    try {
+                                        textSocket.close(1000, 'Normal closure');
+                                    } catch (error) {
+                                        logInfo(`Spectrum Graph error closing WebSocket:`, error);
+                                    }
+                                }
+                                textSocketLost = null;
+                            }, 10000);
                         }
 
                     } catch (error) {
@@ -205,7 +217,7 @@ async function TextWebSocket(messageData) {
     }
 }
 
-// Extra WebSocket
+// Function for 'data_plugins' WebSocket
 async function ExtraWebSocket() {
     if (!extraSocket || extraSocket.readyState === WebSocket.CLOSED) {
         try {
@@ -234,23 +246,23 @@ async function ExtraWebSocket() {
 
                     // Handle messages
                     if (!messageParsedTimeout) {
-                      if (message.type === 'spectrum-graph' && message.value?.status === 'scan') {
-                          ipAddress = message.value?.ip.slice(0, 64) || 'unknown IP';
-                          if (!isScanRunning) restartScan('scan');
-                      } else if (!message.value?.status === 'scan') {
-                        logError(`Spectrum Graph unknown command received:`, message);
-                      }
-                      messageParsedTimeout = true;
-
-                      if (messageParsed) { // Shouldn't be needed as messageParsedTimeout will prevent it running multiple times
-                        clearInterval(messageParsed);
-                      }
-                      messageParsed = setTimeout(() => {
-                        if (messageParsed) {
-                          clearInterval(messageParsed);
-                          messageParsedTimeout = false;
+                        if (message.type === 'spectrum-graph' && message.value?.status === 'scan') {
+                            ipAddress = message.value?.ip.slice(0, 64) || 'unknown IP';
+                            if (!isFirstRun && !isScanRunning) restartScan('scan');
+                        } else if (!message.value?.status === 'scan') {
+                            logError(`Spectrum Graph unknown command received:`, message);
                         }
-                      }, 150); // Reduce spamming
+                        messageParsedTimeout = true;
+
+                        if (messageParsed) { // Might not be needed as messageParsedTimeout will prevent it running multiple times
+                            clearInterval(messageParsed);
+                        }
+                        messageParsed = setTimeout(() => {
+                            if (messageParsed) {
+                                clearInterval(messageParsed);
+                                messageParsedTimeout = false;
+                            }
+                        }, 150); // Reduce spamming
                     }
                 } catch (error) {
                     logError(`Spectrum Graph: Failed to handle message:`, error);
@@ -265,7 +277,8 @@ async function ExtraWebSocket() {
 ExtraWebSocket();
 TextWebSocket();
 
-// Intercepted U and Z data storage
+// Intercepted data storage
+let interceptedFwData = null;
 let interceptedUData = null;
 let interceptedZData = null;
 
@@ -273,10 +286,21 @@ let interceptedZData = null;
 const originalHandleData = datahandlerReceived.handleData;
 
 // datahandler code
-datahandlerReceived.handleData = function (wss, receivedData, rdsWss) {
+datahandlerReceived.handleData = function(wss, receivedData, rdsWss) {
     const receivedLines = receivedData.split('\n');
 
     for (const receivedLine of receivedLines) {
+        if (receivedLine.startsWith(`${checkFirmwareCommand}`)) {
+            interceptedFwData = receivedLine.substring(1); // Store data
+            // 'I' is DX scan sensitivity setting found in TEF radio menu
+            if (Number(interceptedFwData) > 0) isModule = false; // Hacky method to detect firmware used
+            if (isModule) {
+                logInfo("Spectrum Graph: TEF668X module firmware detected");
+            } else {
+                logInfo("Spectrum Graph: TEF668X radio firmware detected");
+            }
+            break;
+        }
         if (receivedLine.startsWith('U')) {
             interceptedUData = receivedLine.substring(1); // Store 'U' data
             datahandlerReceived.dataToSend.sd = interceptedUData; // Update dataToSend.sd
@@ -289,9 +313,9 @@ datahandlerReceived.handleData = function (wss, receivedData, rdsWss) {
             if (antennaSwitch) antennaCurrent = Number(interceptedZData);
 
             let uValueNew = null;
-            
+
             if (antennaSwitch && datahandlerReceived.dataToSend[`sd${antennaCurrent}`]) uValueNew = datahandlerReceived.dataToSend[`sd${antennaCurrent}`];
-            
+
             if (uValueNew !== null) {
                 let uValue = uValueNew;
 
@@ -322,9 +346,9 @@ datahandlerReceived.handleData = function (wss, receivedData, rdsWss) {
                     });
                     extraSocket.send(messageClient);
                 } else {
-                    logInfo(`Spectrum Graph: Scan interrupted, invalid 'uValue' for Ant. ${antennaCurrent}, clearing bad data.`);
+                    logInfo(`Spectrum Graph: Invalid 'uValue' for Ant. ${antennaCurrent}, clearing incomplete data.`);
                 }
-            isScanHalted(true);
+                isScanHalted(true);
             }
             break;
         }
@@ -341,80 +365,132 @@ let antennaResponse = { enabled: false };
 if (config.antennas) antennaResponse = config.antennas;
 
 if (antennaResponse.enabled) { // Continue if 'enabled' is true
-  antennaSwitch = true;
-  antennaCurrent = 0; // Default antenna
-  const antennas = ['ant1', 'ant2', 'ant3', 'ant4'];
+    antennaSwitch = true;
+    antennaCurrent = 0; // Default antenna
+    const antennas = ['ant1', 'ant2', 'ant3', 'ant4'];
 
-  let antennaStatus = {};
+    let antennaStatus = {};
 
-  antennas.forEach(ant => {
-    antennaStatus[ant] = antennaResponse[ant].enabled; // antennaResponse.antX.enabled set to true or false
-  });
+    antennas.forEach(ant => {
+        antennaStatus[ant] = antennaResponse[ant].enabled; // antennaResponse.antX.enabled set to true or false
+    });
 
-  // Assign null to antennas enabled
-  [1, 2, 3, 4].forEach((i) => {
-    if (antennaResponse[`ant${i}`].enabled) {
-      datahandlerReceived.dataToSend[`sd${i - 1}`] = null; // Assign null value to enabled antennas
-    }
-  });
-}
-
-// Function for first run
-function waitForTextSocket(maxWaitTime = 30000) {
-    const startTime = Date.now();
-
-    return new Promise((resolve, reject) => {
-        const check = () => {
-            if (typeof textSocket !== 'undefined' && textSocket !== null) {
-                resolve(textSocket);
-            } else if (Date.now() - startTime >= maxWaitTime) {
-                logError(new Error(`Spectrum Graph: textSocket was not defined within 30 seconds`));
-                reject();
-            } else {
-                setTimeout(check, 1000);
-            }
-        };
-
-        check();
+    // Assign null to antennas enabled
+    [1, 2, 3, 4].forEach((i) => {
+        if (antennaResponse[`ant${i}`].enabled) {
+            datahandlerReceived.dataToSend[`sd${i - 1}`] = null; // Assign null value to enabled antennas
+        }
     });
 }
 
-waitForTextSocket()
-    .then((value) => {
-      let initialDelay = 5000;
-      logInfo(`Spectrum Graph: textSocket is defined, preparing first run...`);
-      setTimeout(() => restartScan('scan'), initialDelay); // First run
+// Function for first run on startup
+function waitForTextSocket() {
+    // If default frequency is enabled in config
+    isFirstRun = true;
+    isModule = true;
+    if (config.enableDefaultFreq) {
+        const checkFrequencyInterval = 100;
+        const timeoutDuration = 15000;
 
-      if (antennaResponse.enabled) {
-          // antennaResponse.ant1.enabled is first antenna so can be skipped
+        let isFrequencyMatched = false;
 
-          if (antennaResponse.ant2.enabled) {
-            setTimeout(() => sendCommandToClient('Z1'), initialDelay + 3000);
-            setTimeout(() => restartScan('scan'), initialDelay + 3600);
-          } else {
-            setTimeout(() => sendCommandToClient('Z0'), initialDelay + 3600);
-            return;
-          }
-            
-          if (antennaResponse.ant3.enabled) {
-            setTimeout(() => sendCommandToClient('Z2'), initialDelay + 6200);
-            setTimeout(() => restartScan('scan'), initialDelay + 6800);
-          } else {
-            setTimeout(() => sendCommandToClient('Z0'), initialDelay + 6800);
-            return;
-          }
+        let intervalId = setInterval(() => {
+            if (Number(config.defaultFreq).toFixed(2) === Number(currentFrequency).toFixed(2)) {
+                isFrequencyMatched = true;
+                clearInterval(intervalId);
+                initialDelay = 800;
+                checkFirmware();
+                firstRun();
+            }
+        }, checkFrequencyInterval);
 
-          if (antennaResponse.ant4.enabled) {
-            setTimeout(() => sendCommandToClient('Z3'), initialDelay + 9400);
-            setTimeout(() => restartScan('scan'), initialDelay + 10000);
-          } else {
-            setTimeout(() => sendCommandToClient('Z0'), initialDelay + 10000);
-            return;
-          }
-      }
+        setTimeout(() => {
+            if (!isFrequencyMatched) {
+                clearInterval(intervalId);
+                logError("Spectrum Graph: Default Frequency does not match current frequency.");
+            }
+        }, timeoutDuration);
+    } else {
+        // If default frequency is disabled in config
+        initialDelay = 6000;
+        checkFirmware();
+        firstRun();
+    }
 
-    })
-    .catch(() => {});
+    function checkFirmware() {
+        async function waitForFrequency(timeout = 10000) {
+            const checkInterval = 100;
+
+            return new Promise((resolve, reject) => {
+                const startTime = Date.now();
+
+                const checkFrequency = setInterval(() => {
+                    const freq = Number(currentFrequency).toFixed(2);
+
+                    if (freq > 0.00) {
+                        clearInterval(checkFrequency);
+                        // Firmware can be checked once frequency is detected
+                        sendCommandToClient(`${checkFirmwareCommand}`);
+                    }
+
+                    if (Date.now() - startTime >= timeout) {
+                        clearInterval(checkFrequency);
+                        reject('Spectrum Graph: Current frequency not found in time');
+                    }
+                }, checkInterval);
+            });
+        }
+
+        waitForFrequency()
+            .then(message => logInfo(message))
+            .catch(error => logError(error));
+    }
+
+    function firstRun() {
+        logInfo(`Spectrum Graph: Default frequency set and WebSocket connected, preparing first run...`);
+        setTimeout(() => restartScan('scan'), initialDelay); // First run
+
+        // Scan additional antennas
+        if (antennaResponse.enabled) {
+            // Determine scaling factor based on tuningStepSize
+            const scalingFactor = 100 / tuningStepSize;
+
+            const antennas = [
+                { enabled: antennaResponse.ant2.enabled, command: 'Z1' },
+                { enabled: antennaResponse.ant3.enabled, command: 'Z2' },
+                { enabled: antennaResponse.ant4.enabled, command: 'Z3' }
+            ];
+
+            for (let i = 0; i < antennas.length; i++) {
+                const antenna = antennas[i];
+                const command = antenna.enabled ? antenna.command : 'Z0';
+
+                // Calculate time offset considering the scaling factor
+                const timeOffset = initialDelay + (3000 * scalingFactor) + (3200 * i * scalingFactor);
+
+                setTimeout(() => sendCommandToClient(command), timeOffset);
+
+                if (antenna.enabled) {
+                    setTimeout(() => restartScan('scan'), timeOffset + 600);
+                }
+            }
+
+            // End of first run (antenna switch enabled)
+            const finalTimeOffset = initialDelay + (3000 * scalingFactor) + (3200 * antennas.length * scalingFactor);
+            setTimeout(() => {
+                sendCommandToClient('Z0');
+                isFirstRun = false;
+                logInfo(`Spectrum Graph: Scan button unlocked, first run complete.`);
+            }, finalTimeOffset);
+        } else {
+            // End of first run (antenna switch disabled)
+            setTimeout(() => {
+                isFirstRun = false;
+                logInfo(`Spectrum Graph: Scan button unlocked, first run complete.`);
+            }, initialDelay + (3000 * (100 / tuningStepSize)));
+        }
+    }
+}
 
 function sendCommand(socket, command) {
     //logInfo(`Spectrum Graph send command:`, command);
@@ -423,7 +499,7 @@ function sendCommand(socket, command) {
 
 async function sendCommandToClient(command) {
     try {
-        // Ensure the TextWebSocket connection is established
+        // Ensure TextWebSocket connection is established
         await TextWebSocket();
 
         if (textSocket && textSocket.readyState === WebSocket.OPEN) {
@@ -437,10 +513,10 @@ async function sendCommandToClient(command) {
     }
 }
 
-if (typeof retryFailed === 'undefined') { let retryFailed = 0; } // Custom code
+if (typeof retryFailed === 'undefined') { let retryFailed = 0; }
 
 function waitForServer() {
-    // Wait for the server to become available
+    // Wait for server to become available
     if (typeof textSocket !== "undefined") {
         textSocket.addEventListener("message", (event) => {
             let parsedData;
@@ -449,9 +525,9 @@ function waitForServer() {
             try {
                 parsedData = JSON.parse(event.data);
             } catch (err) {
-                // Handle the error
+                // Handle error
                 logError(`Spectrum Graph failed to parse JSON:`, err);
-                return;  // Skip further processing if JSON is invalid
+                return; // Skip further processing if JSON is invalid
             }
 
             // Check if parsedData contains expected properties
@@ -460,7 +536,7 @@ function waitForServer() {
             currentFrequency = freq;
         });
     } else {
-        if (retryFailed) { 
+        if (retryFailed) {
             logError(`Spectrum Graph: Socket is not defined.`);
         }
         retryFailed++;
@@ -476,9 +552,10 @@ function startScan(command) {
     // Begin scan
     datahandlerReceived.dataToSend.sd = null;
 
-    let tuningLowerLimit = config.webserver.tuningLowerLimit;
-    let tuningUpperLimit = config.webserver.tuningUpperLimit;
+    // Restrict to config tuning limit, else 0-108 MHz
     let tuningLimit = config.webserver.tuningLimit;
+    let tuningLowerLimit = tuningLimit === false ? 0 : config.webserver.tuningLowerLimit;
+    let tuningUpperLimit = tuningLimit === false ? 108 : config.webserver.tuningUpperLimit;
 
     if (isNaN(currentFrequency) || currentFrequency === 0.0) {
         currentFrequency = tuningLowerLimit;
@@ -488,51 +565,105 @@ function startScan(command) {
     isScanHalted(false);
 
     if (textSocket) {
-      tuningLowerLimitScan = Math.round(tuningLowerLimit * 1000);
-      tuningUpperLimitScan = Math.round(tuningUpperLimit * 1000);
+        tuningLowerLimitScan = Math.round(tuningLowerLimit * 1000);
+        tuningUpperLimitScan = Math.round(tuningUpperLimit * 1000);
 
-      if (tuningRange) {
-          tuningLowerLimitScan = (currentFrequency * 1000) - (tuningRange * 1000);
-          tuningUpperLimitScan = (currentFrequency * 1000) + (tuningRange * 1000);
-      }
+        if (tuningRange) {
+            tuningLowerLimitScan = (currentFrequency * 1000) - (tuningRange * 1000);
+            tuningUpperLimitScan = (currentFrequency * 1000) + (tuningRange * 1000);
+        }
 
-      if (tuningUpperLimitScan > (tuningUpperLimit * 1000)) tuningUpperLimitScan = (tuningUpperLimit * 1000);
-      if (tuningLowerLimitScan < (tuningLowerLimit * 1000)) tuningLowerLimitScan = (tuningLowerLimit * 1000);
+        if (tuningUpperLimitScan > (tuningUpperLimit * 1000)) tuningUpperLimitScan = (tuningUpperLimit * 1000);
+        if (tuningLowerLimitScan < (tuningLowerLimit * 1000)) tuningLowerLimitScan = (tuningLowerLimit * 1000);
 
-      // Handle limitations
-      if (tuningLowerLimitScan < 0.144) tuningLowerLimitScan = 0.144;
-      if (tuningLowerLimitScan > 27000 && tuningLowerLimitScan < 64000) tuningLowerLimitScan = 64000;
-      if (tuningLowerLimitScan < 64000) tuningLowerLimitScan = 64000; // Doesn't like scanning HF frequencies
+        // Handle frequency limitations
+        if (tuningLowerLimitScan < 0.144) tuningLowerLimitScan = 0.144;
+        if (tuningLowerLimitScan > 27000 && tuningLowerLimitScan < 64000) tuningLowerLimitScan = 64000;
+        if (tuningLowerLimitScan < 64000) tuningLowerLimitScan = 64000; // Doesn't like scanning HF frequencies
 
-      // Keep tuning range consistent for restricted tuning range setting
-      if (tuningRange) {
-          tuningLowerLimitOffset = (tuningRange * 1000) - (tuningUpperLimitScan - (currentFrequency * 1000));
-          tuningUpperLimitOffset = (tuningLowerLimitScan - (currentFrequency * 1000)) + (tuningRange * 1000);
-      } else {
-          tuningLowerLimitOffset = 0;
-          tuningUpperLimitOffset = 0;
-      }
+        // Keep tuning range consistent for restricted tuning range setting
+        if (tuningRange) {
+            tuningLowerLimitOffset = (tuningRange * 1000) - (tuningUpperLimitScan - (currentFrequency * 1000));
+            tuningUpperLimitOffset = (tuningLowerLimitScan - (currentFrequency * 1000)) + (tuningRange * 1000);
+        } else {
+            tuningLowerLimitOffset = 0;
+            tuningUpperLimitOffset = 0;
+        }
 
-      // Limit scan to either 64-86 MHz or 86-108 MHz 
-      if ((currentFrequency * 1000) < 86000 && tuningUpperLimitScan > 86000) tuningUpperLimitScan = 86000;
-      if ((currentFrequency * 1000) >= 86000 && tuningLowerLimitScan < 86000) tuningLowerLimitScan = 86000;
+        // Limit scan to either OIRT band (64-86 MHz) or FM band (86-108 MHz)
+        if ((currentFrequency * 1000) < 86000 && tuningUpperLimitScan > 86000) tuningUpperLimitScan = 86000;
+        if ((currentFrequency * 1000) >= 86000 && tuningLowerLimitScan < 86000) tuningLowerLimitScan = 86000;
 
-      // The magic happens here
-      sendCommandToClient(`Sa${tuningLowerLimitScan - tuningLowerLimitOffset}`);
-      sendCommandToClient(`Sb${tuningUpperLimitScan + tuningUpperLimitOffset}`);
-      sendCommandToClient(`Sc${tuningStepSize}`);
-      sendCommandToClient('S');
+        // The magic happens here
+        if (currentFrequency >= 64) {
+            sendCommandToClient(`Sa${tuningLowerLimitScan - tuningLowerLimitOffset}`);
+            sendCommandToClient(`Sb${tuningUpperLimitScan + tuningUpperLimitOffset}`);
+            sendCommandToClient(`Sc${tuningStepSize}`);
+            if (debug) {
+                console.log(`Sa${tuningLowerLimitScan - tuningLowerLimitOffset}`);
+                console.log(`Sb${tuningUpperLimitScan + tuningUpperLimitOffset}`);
+                console.log(`Sc${tuningStepSize}`);
+            }
+            if (isModule) {
+                sendCommandToClient(`Sw${tuningBandwidth * 1000}`);
+                if (debug) console.log(`Sw${tuningBandwidth * 1000}`);
+            } else {
+                if (tuningBandwidth < 0) {
+                    BWradio = -1;
+                } else if (tuningBandwidth == 56) {
+                    BWradio = 0;
+                } else if (tuningBandwidth == 64) {
+                    BWradio = 26;
+                } else if (tuningBandwidth == 72) {
+                    BWradio = 1;
+                } else if (tuningBandwidth == 84) {
+                    BWradio = 28;
+                } else if (tuningBandwidth == 97) {
+                    BWradio = 29;
+                } else if (tuningBandwidth == 114) {
+                    BWradio = 3;
+                } else if (tuningBandwidth == 133) {
+                    BWradio = 4;
+                } else if (tuningBandwidth == 151) {
+                    BWradio = 5;
+                } else if (tuningBandwidth == 168) {
+                    BWradio = 7;
+                } else if (tuningBandwidth == 184) {
+                    BWradio = 8;
+                } else if (tuningBandwidth == 200) {
+                    BWradio = 9;
+                } else if (tuningBandwidth == 217) {
+                    BWradio = 10;
+                } else if (tuningBandwidth == 236) {
+                    BWradio = 11;
+                } else if (tuningBandwidth == 254) {
+                    BWradio = 12;
+                } else if (tuningBandwidth == 287) {
+                    BWradio = 13;
+                } else if (tuningBandwidth == 311) {
+                    BWradio = 15;
+                }
+                sendCommandToClient(`Sf${BWradio}`);
+                if (debug) console.log(`Sf${BWradio}`);
+            }
+            sendCommandToClient('S');
+            if (debug) console.log('S');
+        } else {
+            isScanHalted(true);
+            logWarn('Spectrum Graph: Hardware is not capable of scanning below 64 MHz.');
+            return;
+        }
     }
-    logInfo(`Spectrum Graph: Spectral commands sent (IP: ${ipAddress})`);
+    logInfo(`Spectrum Graph: Spectral commands sent (${ipAddress})`);
 
-    // Reset U data before receiving new data
+    // Reset data before receiving new data
     interceptedUData = null;
     interceptedZData = null;
     sigArray = [];
 
     // Wait for U value using async
     async function waitForUValue(timeout = 10000, interval = 40) {
-        const waitStartTime = Date.now(); // Start of the waiting period
+        const waitStartTime = Date.now(); // Start of waiting period
 
         while (Date.now() - waitStartTime < timeout) {
             if (interceptedUData !== null && interceptedUData !== undefined) {
@@ -547,7 +678,7 @@ function startScan(command) {
 
     (async () => {
         try {
-            const scanStartTime = Date.now(); // Start of the entire scan process
+            const scanStartTime = Date.now(); // Start of entire scan process
             let uValue = await waitForUValue();
 
             // Remove trailing comma and space in TEF radio firmware
@@ -563,18 +694,20 @@ function startScan(command) {
                     datahandlerReceived.dataToSend.sd = null; // Reset value to clear incomplete data
                 }, 200);
             }
-            //console.log(uValue);
+            if (debug) console.log(uValue);
 
             const completeTime = ((Date.now() - scanStartTime) / 1000).toFixed(1); // Calculate total time
             logInfo(`Spectrum Graph: Spectrum scan (${(tuningLowerLimitScan / 1000)}-${(tuningUpperLimitScan / 1000)} MHz) ${antennaResponse.enabled ? `for Ant. ${antennaCurrent} ` : ''}complete in ${completeTime} seconds.`);
 
-            // Split the response into pairs and process each one
+            if (!isFirstRun) lastRestartTime = Date.now();
+
+            // Split response into pairs and process each one
             sigArray = uValue.split(',').map(pair => {
                 const [freq, sig] = pair.split('=');
                 return { freq: (freq / 1000).toFixed(2), sig: parseFloat(sig).toFixed(1) };
             });
 
-            //console.log(sigArray);
+            // if (debug) console.log(sigArray);
 
             const messageClient = JSON.stringify({
                 type: 'sigArray',
@@ -589,23 +722,23 @@ function startScan(command) {
 }
 
 function isScanHalted(status) {
-  if (status) {
-    isScanRunning = false;
-  } else {
-    isScanRunning = true;
-  }
+    if (status) {
+        isScanRunning = false;
+    } else {
+        isScanRunning = true;
+    }
 }
 
 function restartScan(command) {
-    const now = Date.now();
+    nowTime = Date.now();
 
-    if (now - lastRestartTime < (retryDelay * 1000)) {
-        logInfo(`Spectrum Graph in cooldown mode, can retry in ${(((retryDelay * 1000) - (now - lastRestartTime)) / 1000).toFixed(1)} seconds (IP: ${ipAddress})`);
+    if (!isFirstRun && nowTime - lastRestartTime < (rescanDelay * 1000)) {
+        logInfo(`Spectrum Graph in cooldown mode, can retry in ${(((rescanDelay * 1000) - (nowTime - lastRestartTime)) / 1000).toFixed(1)} seconds (${ipAddress})`);
         return;
     }
-    
-    lastRestartTime = now;
+
+    lastRestartTime = nowTime;
 
     // Restart scan
-    if (!isScanRunning) setTimeout(() => startScan(command), 10);
+    if (!isScanRunning) setTimeout(() => startScan(command), 20);
 }
