@@ -2,7 +2,7 @@
 
 This plugin scans the FM radio band in under 1.5 seconds, then displayed in a spectrum window.
 
-![Untitled-1](https://github.com/user-attachments/assets/e64cbedb-bfda-4835-a7d6-ad2efc7a39a8)
+![spectrum_graph](https://github.com/user-attachments/assets/e1383c27-2e29-4231-b8d3-a9d70c469944)
 
 ## Instructions
 
@@ -13,10 +13,27 @@ This plugin scans the FM radio band in under 1.5 seconds, then displayed in a sp
 * Server-side configuration options stored in `/plugins_configs/SpectrumGraph.json`
 * Client-side configuration options located in `SpectrumGraph.js`
 
-> [!IMPORTANT]
-> TEF radio requires the latest **TEF6686_ESP32** beta firmware (v2.11.8) available from the FMDX.org Discord server   
-> or   
-> TEF module with latest **FM-DX-Tuner** firmware by kkonradpl.   
+> [!TIP]
+> #### **SpectrumGraph.json**
+> 
+> - **`rescanDelay`**: Value in seconds of time elasped since the end of previous scan before a new scan can be requested.   
+> - **`tuningRange`**: Value in MHz of side frequencies to scan. Value of 0 scans the entire FM/OIRT band.   
+> - **`tuningStepSize`**: Value in kHz of the tuning stepsize. Recommended values are either 100 or 50.   
+> - **`tuningBandwidth`**: Values supported: 0, 56, 64, 72, 84, 97, 114, 133, 151, 168, 184, 200, 217, 236, 254, 287, 311.   
+
+
+> [!NOTE]
+> TEF radio requires the latest **TEF6686_ESP32** beta firmware (v2.11.8) available from the   
+> FMDX.org Discord server, or TEF module with latest **FM-DX-Tuner** firmware by kkonradpl.
+>
+> Bandwidth setting exists for TEF radio firmware but does not function at this point in time.
+
+v1.1.2
+------
+* Added bandwidth setting
+* Backend TEF module/radio firmware detection for bandwidth setting
+* Improved startup antenna sequence
+* Minor bug fixes
 
 v1.1.1
 ------
