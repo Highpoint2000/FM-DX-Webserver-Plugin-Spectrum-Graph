@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.1.2 by AAD
+    Spectrum Graph v1.1.3 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 */
 
@@ -10,13 +10,15 @@
 const checkUpdates = true;                      // Checks online if a new version is available
 const borderlessTheme = true;                   // Background and text colours match FM-DX Webserver theme
 const enableMouseScrollWheel = true;            // Allow the mouse scroll wheel to tune inside the graph
+const decimalMarkerRoundOff = true;             // Round frequency markers to the nearest integer
 const useButtonSpacingBetweenCanvas = true;     // Other plugins are likely to override this if set to false
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const pluginVersion = '1.1.2';
+const pluginVersion = '1.1.3';
 
 // const variables
+const debug = false;
 const dataFrequencyElement = document.getElementById('data-frequency');
 const drawGraphDelay = 10;
 const canvasHeightSmall = 120;
@@ -38,6 +40,74 @@ let sigOffset, xSigOffset, sigDesc, prevSignalText;
 let removeUpdateTextTimeout;
 let updateText;
 let wsSendSocket;
+
+// Create Spectrum Graph button
+const SPECTRUM_BUTTON_NAME = 'SPECTRUM';
+const aSpectrumCss = `
+#spectrum-graph-button {
+border-radius: 0px;
+width: 100px;
+height: 22px;
+position: relative;
+margin-top: 16px;
+margin-left: 5px;
+right: 0px;
+}
+`
+$("<style>")
+    .prop("type", "text/css")
+    .html(aSpectrumCss)
+    .appendTo("head");
+
+const aSpectrumText = $('<strong>', {
+    class: 'aspectrum-text',
+    html: SPECTRUM_BUTTON_NAME
+});
+
+const aSpectrumButton = $('<button>', {
+    id: 'spectrum-graph-button',
+});
+
+aSpectrumButton.append(aSpectrumText);
+
+function initializeSpectrumButton() {
+
+    let buttonWrapper = $('#button-wrapper');
+    if (buttonWrapper.length < 1) {
+        buttonWrapper = createDefaultButtonWrapper();
+    }
+
+    if (buttonWrapper.length) {
+        aSpectrumButton.addClass('hide-phone bg-color-2')
+        buttonWrapper.append(aSpectrumButton);
+    }
+    displaySignalCanvas();
+}
+
+// Create a default button wrapper if it does not exist
+function createDefaultButtonWrapper() {
+    const wrapperElement = $('.tuner-info');
+    if (wrapperElement.length) {
+        const buttonWrapper = $('<div>', {
+            id: 'button-wrapper'
+        });
+        buttonWrapper.addClass('button-wrapper');
+        wrapperElement.append(buttonWrapper);
+        if (useButtonSpacingBetweenCanvas) wrapperElement.append(document.createElement('br'));
+        return buttonWrapper;
+    } else {
+        console.error('Spectrum Graph: Standard button location not found. Unable to add button.');
+        return null;
+    }
+}
+
+$(window).on('load', function() {
+    setTimeout(initializeSpectrumButton, 200);
+
+    aSpectrumButton.on('click', function() {
+        toggleSpectrum();
+    });
+});
 
 // Create the WebSocket connection
 const currentURL = new URL(window.location.href);
@@ -70,16 +140,16 @@ async function setupSendSocket() {
                         if (sigArray.length > 0) {
                             setTimeout(drawGraph, drawGraphDelay);
                         }
-                        /*
-                        if (Array.isArray(data.value)) {
-                            // Process sigArray
-                            data.value.forEach(item => {
-                                console.log(`freq: ${item.freq}, sig: ${item.sig}`);
-                            });
-                        } else {
-                            console.error('Expected array for sigArray, but received:', data.value);
+                        if (debug) {
+                            if (Array.isArray(data.value)) {
+                                // Process sigArray
+                                data.value.forEach(item => {
+                                    console.log(`freq: ${item.freq}, sig: ${item.sig}`);
+                                });
+                            } else {
+                                console.error('Expected array for sigArray, but received:', data.value);
+                            }
                         }
-                        */
                     }
                 };
             };
@@ -542,6 +612,17 @@ async function initializeGraph() {
                     return { freq: (freq / 1000).toFixed(2), sig: parseFloat(sig).toFixed(1) };
                 });
             }
+
+            if (debug) {
+                if (Array.isArray(sigArray)) {
+                    // Process sigArray
+                    sigArray.forEach(item => {
+                        console.log(`freq: ${item.freq}, sig: ${item.sig}`);
+                    });
+                } else {
+                    console.error('Expected array for sigArray, but received:', sigArray);
+                }
+            }
         } else {
             console.log('Spectrum Graph found no data available at page load.');
         }
@@ -552,74 +633,6 @@ async function initializeGraph() {
 
 // Call function on page load
 window.addEventListener('load', initializeGraph);
-
-// Create Spectrum Graph button
-const SPECTRUM_BUTTON_NAME = 'SPECTRUM';
-const aSpectrumCss = `
-#spectrum-graph-button {
-border-radius: 0px;
-width: 100px;
-height: 22px;
-position: relative;
-margin-top: 16px;
-margin-left: 5px;
-right: 0px;
-}
-`
-$("<style>")
-    .prop("type", "text/css")
-    .html(aSpectrumCss)
-    .appendTo("head");
-
-const aSpectrumText = $('<strong>', {
-    class: 'aspectrum-text',
-    html: SPECTRUM_BUTTON_NAME
-});
-
-const aSpectrumButton = $('<button>', {
-    id: 'spectrum-graph-button',
-});
-
-aSpectrumButton.append(aSpectrumText);
-
-function initializeSpectrumButton() {
-
-    let buttonWrapper = $('#button-wrapper');
-    if (buttonWrapper.length < 1) {
-        buttonWrapper = createDefaultButtonWrapper();
-    }
-
-    if (buttonWrapper.length) {
-        aSpectrumButton.addClass('hide-phone bg-color-2')
-        buttonWrapper.append(aSpectrumButton);
-    }
-    displaySignalCanvas();
-}
-
-// Create a default button wrapper if it does not exist
-function createDefaultButtonWrapper() {
-    const wrapperElement = $('.tuner-info');
-    if (wrapperElement.length) {
-        const buttonWrapper = $('<div>', {
-            id: 'button-wrapper'
-        });
-        buttonWrapper.addClass('button-wrapper');
-        wrapperElement.append(buttonWrapper);
-        if (useButtonSpacingBetweenCanvas) wrapperElement.append(document.createElement('br'));
-        return buttonWrapper;
-    } else {
-        console.error('Spectrum Graph: Standard button location not found. Unable to add button.');
-        return null;
-    }
-}
-
-$(window).on('load', function() {
-    setTimeout(initializeSpectrumButton, 200);
-
-    aSpectrumButton.on('click', function() {
-        toggleSpectrum();
-    });
-});
 
 
 // Display signal canvas (default)
@@ -796,8 +809,8 @@ function initializeCanvasInteractions() {
 
     // Style tooltip
     tooltip.style.position = 'absolute';
-    tooltip.style.background = 'var(--color-5-transparent)';
-    tooltip.style.color = '#fefeff';
+    tooltip.style.background = 'var(--color-3-transparent)';
+    tooltip.style.color = 'var(--color-main-2)';
     tooltip.style.padding = '5px';
     tooltip.style.borderRadius = '8px';
     tooltip.style.fontSize = '12px';
@@ -843,6 +856,16 @@ function initializeCanvasInteractions() {
         if (closestPoint) {
             const signalValue = Number(closestPoint.sig);
 
+            // Calculate tooltip content
+            const freqText = `${freq.toFixed(1)} MHz`;
+            const signalText = `, ${signalValue.toFixed(0) - sigOffset} ${sigDesc}`;
+
+            // Style HTML
+            tooltip.innerHTML = `
+                <span style="font-weight: 600;">${freqText}</span>
+                <span style="font-weight: 400;">${signalText}</span>
+            `;
+
             // Calculate position of circle
             const circleX = xOffset + (closestPoint.freq - minFreq) * xScale;
             const circleY = canvas.height - (signalValue * yScale) - 20;
@@ -856,21 +879,17 @@ function initializeCanvasInteractions() {
             ctx.lineWidth = 2;
             ctx.stroke();
 
-            // Calculate tooltip position above corresponding signal value
+            // Tooltip positioning
             let tooltipX = (xOffset + 10) + (closestPoint.freq - minFreq) * xScale;
             const tooltipY = canvas.height - 20 - signalValue * yScale;
-
-            // Check if tooltip is going out of bounds on the right
             const tooltipWidth = tooltip.offsetWidth;
+
             if (tooltipX + tooltipWidth > canvas.width) {
-                // Adjust tooltip position to fit within canvas
                 tooltipX = mouseX - tooltip.offsetWidth - 10;
             }
 
-            // Position and display tooltip
             tooltip.style.left = `${tooltipX}px`;
-            tooltip.style.top = `${tooltipY - 30}px`; // Position above graph point
-            tooltip.textContent = ` ${freq.toFixed(1)} MHz, ${signalValue.toFixed(0) - sigOffset} ${sigDesc} `;
+            tooltip.style.top = `${tooltipY - 30}px`;
             tooltip.style.visibility = 'visible';
         }
     }
@@ -1002,7 +1021,7 @@ function drawGraph() {
     const minFreq = Math.min(...sigArray.map(d => d.freq));
 
     // Determine frequency step dynamically
-    const freqRange = maxFreq - minFreq;
+    const freqRange = (maxFreq - minFreq).toFixed(2);
     const approxSpacing = width / freqRange; // Approx spacing per frequency
     let freqStep;
     if (approxSpacing < 20) {
@@ -1046,7 +1065,12 @@ function drawGraph() {
         ctx.font = `12px Helvetica, Calibri, Arial, Monospace, sans-serif`;
     }
     ctx.strokeStyle = '#ccc';
-    for (let freq = minFreq; freq <= maxFreq; freq += freqStep) {
+
+    // Round minFreq if setting is enabled
+    let minFreqRounded = minFreq;
+    minFreqRounded = decimalMarkerRoundOff ? Math.ceil(minFreqRounded) : minFreqRounded;
+
+    for (let freq = minFreqRounded; freq <= maxFreq; freq += freqStep) {
         const x = xOffset + (freq - minFreq) * xScale;
         if (freq !== minFreq && freq !== maxFreq) ctx.fillText(freq.toFixed(1), x - 10, height - 5);
 
@@ -1054,7 +1078,7 @@ function drawGraph() {
         ctx.lineWidth = 1;
         ctx.setLineDash([]);
 
-        for (let freq = minFreq; freq <= maxFreq; freq += freqStep) {
+        for (let freq = minFreqRounded; freq <= maxFreq; freq += freqStep) {
             const x = xOffset + (freq - minFreq) * xScale;
 
             // Draw tick mark only if it's not the first or last frequency
@@ -1188,7 +1212,7 @@ function drawGraph() {
     ctx.setLineDash([1, 2]); // Dotted lines
 
     // Vertical grid lines (for each frequency step)
-    for (let freq = minFreq; freq <= maxFreq; freq += freqStep) {
+    for (let freq = minFreqRounded; freq <= maxFreq; freq += freqStep) {
         const x = xOffset + (freq - minFreq) * xScale;
         if (freq !== minFreq) {
             ctx.beginPath();

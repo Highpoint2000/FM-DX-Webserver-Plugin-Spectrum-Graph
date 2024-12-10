@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.1.2 by AAD
+    Spectrum Graph v1.1.3 by AAD
     Server-side code
 */
 
@@ -24,7 +24,6 @@ const externalWsUrl = `ws://127.0.0.1:${webserverPort}`;
 // let variables
 let extraSocket, textSocket, textSocketLost, messageParsed, messageParsedTimeout, startTime, tuningLowerLimitScan, tuningUpperLimitScan, tuningLowerLimitOffset, tuningUpperLimitOffset, debounceTimer;
 let ipAddress = 'localhost';
-let BWradio = 0;
 let currentFrequency = 0;
 let initialDelay = 0;
 let lastRestartTime = 0;
@@ -35,8 +34,10 @@ let frequencySocket = null;
 let sigArray = [];
 
 // Check if module or radio firmware
-let isModule = true; // TEF module
-let checkFirmwareCommand = 'I';
+let isModule = true; // TEF668X module
+let isFirstFirmwareNotice = false;
+let firmwareType = 'unknown';
+let BWradio = 0;
 
 // Define paths used for config
 const rootDir = path.dirname(require.main.filename); // Locate directory where index.js is located
@@ -44,13 +45,13 @@ const configFolderPath = path.join(rootDir, 'plugins_configs');
 const configFilePath = path.join(configFolderPath, 'SpectrumGraph.json');
 
 // Default configuration
-let rescanDelay = 10; // seconds
+let rescanDelay = 3; // seconds
 let tuningRange = 0; // MHz
 let tuningStepSize = 100; // kHz
 let tuningBandwidth = 56; // kHz
 
 const defaultConfig = {
-    rescanDelay: 10,
+    rescanDelay: 3,
     tuningRange: 0,
     tuningStepSize: 100,
     tuningBandwidth: 56
@@ -167,7 +168,7 @@ async function TextWebSocket(messageData) {
             textSocket = new WebSocket(`${externalWsUrl}/text`);
 
             textSocket.onopen = () => {
-                logInfo(`Spectrum Graph connected to WebSocket`);
+                // Spectrum Graph connected to WebSocket
 
                 // Launch startup antenna sequence 
                 waitForTextSocket();
@@ -224,7 +225,7 @@ async function ExtraWebSocket() {
             extraSocket = new WebSocket(`${externalWsUrl}/data_plugins`);
 
             extraSocket.onopen = () => {
-                logInfo(`Spectrum Graph connected to ${externalWsUrl + '/data_plugins'}`);
+                // Spectrum Graph connected to '/data_plugins'
             };
 
             extraSocket.onerror = (error) => {
@@ -278,7 +279,6 @@ ExtraWebSocket();
 TextWebSocket();
 
 // Intercepted data storage
-let interceptedFwData = null;
 let interceptedUData = null;
 let interceptedZData = null;
 
@@ -290,17 +290,6 @@ datahandlerReceived.handleData = function(wss, receivedData, rdsWss) {
     const receivedLines = receivedData.split('\n');
 
     for (const receivedLine of receivedLines) {
-        if (receivedLine.startsWith(`${checkFirmwareCommand}`)) {
-            interceptedFwData = receivedLine.substring(1); // Store data
-            // 'I' is DX scan sensitivity setting found in TEF radio menu
-            if (Number(interceptedFwData) > 0) isModule = false; // Hacky method to detect firmware used
-            if (isModule) {
-                logInfo("Spectrum Graph: TEF668X module firmware detected");
-            } else {
-                logInfo("Spectrum Graph: TEF668X radio firmware detected");
-            }
-            break;
-        }
         if (receivedLine.startsWith('U')) {
             interceptedUData = receivedLine.substring(1); // Store 'U' data
             datahandlerReceived.dataToSend.sd = interceptedUData; // Update dataToSend.sd
@@ -319,9 +308,14 @@ datahandlerReceived.handleData = function(wss, receivedData, rdsWss) {
             if (uValueNew !== null) {
                 let uValue = uValueNew;
 
-                // Remove trailing comma and space in TEF radio firmware
+                // Remove trailing comma and space in TEF668X radio firmware
                 if (uValue && uValue.endsWith(', ')) {
                     uValue = uValue.slice(0, -2);
+                    isModule = false; // Firmware now detected as TEF668X radio
+                    firmwareType = "TEF668X radio";
+                } else {
+                    isModule = true;
+                    firmwareType = "TEF668X module";
                 }
 
                 // Possibly interrupted
@@ -384,13 +378,14 @@ if (antennaResponse.enabled) { // Continue if 'enabled' is true
 }
 
 // Function for first run on startup
-function waitForTextSocket() {
+function waitForTextSocket() { // First run begins when default frequency is detected
     // If default frequency is enabled in config
     isFirstRun = true;
-    isModule = true;
+    isFirstFirmwareNotice = false; // Reset to false
+    isModule = true; // Reset to true
     if (config.enableDefaultFreq) {
         const checkFrequencyInterval = 100;
-        const timeoutDuration = 15000;
+        const timeoutDuration = 30000;
 
         let isFrequencyMatched = false;
 
@@ -399,7 +394,6 @@ function waitForTextSocket() {
                 isFrequencyMatched = true;
                 clearInterval(intervalId);
                 initialDelay = 800;
-                checkFirmware();
                 firstRun();
             }
         }, checkFrequencyInterval);
@@ -407,18 +401,14 @@ function waitForTextSocket() {
         setTimeout(() => {
             if (!isFrequencyMatched) {
                 clearInterval(intervalId);
-                logError("Spectrum Graph: Default Frequency does not match current frequency.");
+                logError("Spectrum Graph: Default Frequency does not match current frequency, continuing anyway.");
+                initialDelay = 30000;
+                firstRun();
             }
         }, timeoutDuration);
     } else {
         // If default frequency is disabled in config
-        initialDelay = 6000;
-        checkFirmware();
-        firstRun();
-    }
-
-    function checkFirmware() {
-        async function waitForFrequency(timeout = 10000) {
+        async function waitForFrequency(timeout = 10000) { // First run begins when frequency is detected
             const checkInterval = 100;
 
             return new Promise((resolve, reject) => {
@@ -429,8 +419,9 @@ function waitForTextSocket() {
 
                     if (freq > 0.00) {
                         clearInterval(checkFrequency);
-                        // Firmware can be checked once frequency is detected
-                        sendCommandToClient(`${checkFirmwareCommand}`);
+                        initialDelay = 3000;
+                        firstRun();
+                        return;
                     }
 
                     if (Date.now() - startTime >= timeout) {
@@ -447,7 +438,7 @@ function waitForTextSocket() {
     }
 
     function firstRun() {
-        logInfo(`Spectrum Graph: Default frequency set and WebSocket connected, preparing first run...`);
+        logInfo(`Spectrum Graph: TEF668X and WebSocket connected, preparing first run...`);
         setTimeout(() => restartScan('scan'), initialDelay); // First run
 
         // Scan additional antennas
@@ -513,7 +504,7 @@ async function sendCommandToClient(command) {
     }
 }
 
-if (typeof retryFailed === 'undefined') { let retryFailed = 0; }
+let retryFailed = false;
 
 function waitForServer() {
     // Wait for server to become available
@@ -537,9 +528,9 @@ function waitForServer() {
         });
     } else {
         if (retryFailed) {
-            logError(`Spectrum Graph: Socket is not defined.`);
+            logError(`Spectrum Graph: textSocket is not defined.`);
         }
-        retryFailed++;
+        retryFailed = true;
         setTimeout(waitForServer, 1000);
     }
 }
@@ -599,55 +590,44 @@ function startScan(command) {
             sendCommandToClient(`Sa${tuningLowerLimitScan - tuningLowerLimitOffset}`);
             sendCommandToClient(`Sb${tuningUpperLimitScan + tuningUpperLimitOffset}`);
             sendCommandToClient(`Sc${tuningStepSize}`);
+            if (isModule) {
+                sendCommandToClient(`Sw${tuningBandwidth * 1000}`);
+            } else {
+                switch (tuningBandwidth) {
+                    case 56: BWradio = 0; break;
+                    case 64: BWradio = 26; break;
+                    case 72: BWradio = 1; break;
+                    case 84: BWradio = 28; break;
+                    case 97: BWradio = 29; break;
+                    case 114: BWradio = 3; break;
+                    case 133: BWradio = 4; break;
+                    case 151: BWradio = 5; break;
+                    case 168: BWradio = 7; break;
+                    case 184: BWradio = 8; break;
+                    case 200: BWradio = 9; break;
+                    case 217: BWradio = 10; break;
+                    case 236: BWradio = 11; break;
+                    case 254: BWradio = 12; break;
+                    case 287: BWradio = 13; break;
+                    case 311: BWradio = 15; break;
+                    default: BWradio = 0; break;
+                }
+                sendCommandToClient(`Sf${BWradio}`);
+            }
+            sendCommandToClient('S');
+
             if (debug) {
                 console.log(`Sa${tuningLowerLimitScan - tuningLowerLimitOffset}`);
                 console.log(`Sb${tuningUpperLimitScan + tuningUpperLimitOffset}`);
                 console.log(`Sc${tuningStepSize}`);
+                console.log(isModule ? `Sw${tuningBandwidth * 1000}` : `Sf${BWradio}`);
+                console.log('S');
             }
-            if (isModule) {
-                sendCommandToClient(`Sw${tuningBandwidth * 1000}`);
-                if (debug) console.log(`Sw${tuningBandwidth * 1000}`);
-            } else {
-                if (tuningBandwidth < 0) {
-                    BWradio = -1;
-                } else if (tuningBandwidth == 56) {
-                    BWradio = 0;
-                } else if (tuningBandwidth == 64) {
-                    BWradio = 26;
-                } else if (tuningBandwidth == 72) {
-                    BWradio = 1;
-                } else if (tuningBandwidth == 84) {
-                    BWradio = 28;
-                } else if (tuningBandwidth == 97) {
-                    BWradio = 29;
-                } else if (tuningBandwidth == 114) {
-                    BWradio = 3;
-                } else if (tuningBandwidth == 133) {
-                    BWradio = 4;
-                } else if (tuningBandwidth == 151) {
-                    BWradio = 5;
-                } else if (tuningBandwidth == 168) {
-                    BWradio = 7;
-                } else if (tuningBandwidth == 184) {
-                    BWradio = 8;
-                } else if (tuningBandwidth == 200) {
-                    BWradio = 9;
-                } else if (tuningBandwidth == 217) {
-                    BWradio = 10;
-                } else if (tuningBandwidth == 236) {
-                    BWradio = 11;
-                } else if (tuningBandwidth == 254) {
-                    BWradio = 12;
-                } else if (tuningBandwidth == 287) {
-                    BWradio = 13;
-                } else if (tuningBandwidth == 311) {
-                    BWradio = 15;
-                }
-                sendCommandToClient(`Sf${BWradio}`);
-                if (debug) console.log(`Sf${BWradio}`);
+
+            if (!isFirstRun && !isFirstFirmwareNotice) {
+                isFirstFirmwareNotice = true;
+                logInfo(`Spectrum Graph: Firmware detected as ${firmwareType}.`);
             }
-            sendCommandToClient('S');
-            if (debug) console.log('S');
         } else {
             isScanHalted(true);
             logWarn('Spectrum Graph: Hardware is not capable of scanning below 64 MHz.');
@@ -681,9 +661,14 @@ function startScan(command) {
             const scanStartTime = Date.now(); // Start of entire scan process
             let uValue = await waitForUValue();
 
-            // Remove trailing comma and space in TEF radio firmware
+            // Remove trailing comma and space in TEF668X radio firmware
             if (uValue && uValue.endsWith(', ')) {
                 uValue = uValue.slice(0, -2);
+                isModule = false; // Now identified as TEF668X radio firmware
+                firmwareType = "TEF668X radio";
+            } else {
+                isModule = true;
+                firmwareType = "TEF668X module";
             }
 
             // Possibly interrupted
