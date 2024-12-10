@@ -457,7 +457,7 @@ function waitForTextSocket() { // First run begins when default frequency is det
                 const command = antenna.enabled ? antenna.command : 'Z0';
 
                 // Calculate time offset considering the scaling factor
-                const timeOffset = initialDelay + (3000 * scalingFactor) + (3200 * i * scalingFactor);
+                const timeOffset = initialDelay + (3000 * scalingFactor) + (3600 * i * scalingFactor);
 
                 setTimeout(() => sendCommandToClient(command), timeOffset);
 
@@ -467,20 +467,27 @@ function waitForTextSocket() { // First run begins when default frequency is det
             }
 
             // End of first run (antenna switch enabled)
-            const finalTimeOffset = initialDelay + (3000 * scalingFactor) + (3200 * antennas.length * scalingFactor);
-            setTimeout(() => {
-                sendCommandToClient('Z0');
-                isFirstRun = false;
-                logInfo(`Spectrum Graph: Scan button unlocked, first run complete.`);
-            }, finalTimeOffset);
+            const finalTimeOffset = initialDelay + (3000 * scalingFactor) + (3600 * antennas.length * scalingFactor);
+            firstRunComplete(finalTimeOffset);
         } else {
             // End of first run (antenna switch disabled)
-            setTimeout(() => {
-                isFirstRun = false;
-                logInfo(`Spectrum Graph: Scan button unlocked, first run complete.`);
-            }, initialDelay + (3000 * (100 / tuningStepSize)));
+            firstRunComplete(initialDelay + (3000 * (100 / tuningStepSize)));
         }
     }
+}
+
+function firstRunComplete(finalTime) {
+    setTimeout(() => {
+        if (antennaSwitch) sendCommandToClient('Z0');
+
+        if (isFirstRun && !isFirstFirmwareNotice) {
+            isFirstFirmwareNotice = true;
+            logInfo(`Spectrum Graph: Firmware detected as ${firmwareType}.`);
+        }
+
+        isFirstRun = false;
+        logInfo(`Spectrum Graph: Scan button unlocked, first run complete.`);
+    }, finalTime);
 }
 
 function sendCommand(socket, command) {
@@ -576,6 +583,10 @@ function startScan(command) {
         if (tuningRange) {
             tuningLowerLimitOffset = (tuningRange * 1000) - (tuningUpperLimitScan - (currentFrequency * 1000));
             tuningUpperLimitOffset = (tuningLowerLimitScan - (currentFrequency * 1000)) + (tuningRange * 1000);
+
+            // Stay within restricted tuning range
+            if (tuningLowerLimitScan - tuningLowerLimitOffset < tuningLowerLimitScan) tuningLowerLimitOffset = 0;
+            if (tuningUpperLimitScan + tuningUpperLimitOffset < tuningUpperLimitScan) tuningUpperLimitOffset = 0;
         } else {
             tuningLowerLimitOffset = 0;
             tuningUpperLimitOffset = 0;
@@ -622,11 +633,6 @@ function startScan(command) {
                 console.log(`Sc${tuningStepSize}`);
                 console.log(isModule ? `Sw${tuningBandwidth * 1000}` : `Sf${BWradio}`);
                 console.log('S');
-            }
-
-            if (!isFirstRun && !isFirstFirmwareNotice) {
-                isFirstFirmwareNotice = true;
-                logInfo(`Spectrum Graph: Firmware detected as ${firmwareType}.`);
             }
         } else {
             isScanHalted(true);

@@ -23,10 +23,12 @@ const dataFrequencyElement = document.getElementById('data-frequency');
 const drawGraphDelay = 10;
 const canvasHeightSmall = 120;
 const canvasHeightLarge = 175;
+const topValue = borderlessTheme ? '10px' : '14px';
 
 // let variables
 let dataFrequencyValue;
 let isCanvasHovered = false; // Used for mouse scoll wheel
+let isDecimalMarkerRoundOff = decimalMarkerRoundOff;
 let isGraphOpen = false;
 let isSpectrumOn = false;
 let ipAddress = 'unknown host';
@@ -294,7 +296,7 @@ function ScanButton() {
     const rectangularButtonStyle = `
     .rectangular-spectrum-button {
         position: absolute;
-        top: 10px;
+        top: ${topValue};
         right: 16px;
         z-index: 10;
         opacity: 0.8;
@@ -381,7 +383,7 @@ function SmoothingOnOffButton() {
     const buttonStyle = `
     .smoothing-on-off-button {
         position: absolute;
-        top: 10px;
+        top: ${topValue};
         right: 56px;
         z-index: 10;
         opacity: 0.8;
@@ -471,7 +473,7 @@ function ToggleFixedOrDynamicButton() {
     const buttonStyle = `
     .fixed-dynamic-on-off-button {
         position: absolute;
-        top: 10px;
+        top: ${topValue};
         right: 96px;
         z-index: 10;
         opacity: 0.8;
@@ -1016,9 +1018,13 @@ function drawGraph() {
         maxSig = 80; // Fixed vertical graph
     } else {
         maxSig = Math.max(...sigArray.map(d => d.sig)); // Dynamic vertical graph
+        if (maxSig === 0) maxSig = 0.01; // Prevent infinite calculation
     }
+
     const maxFreq = Math.max(...sigArray.map(d => d.freq));
     const minFreq = Math.min(...sigArray.map(d => d.freq));
+
+    if (maxFreq - minFreq <= 12) isDecimalMarkerRoundOff = false;
 
     // Determine frequency step dynamically
     const freqRange = (maxFreq - minFreq).toFixed(2);
@@ -1033,9 +1039,17 @@ function drawGraph() {
     } else if (approxSpacing < 80) {
         freqStep = 0.5;
     } else if (approxSpacing < 160) {
-        freqStep = 0.4;
+        if (isDecimalMarkerRoundOff) {
+            freqStep = 0.5;
+        } else {
+            freqStep = 0.4;
+        }
     } else if (approxSpacing < 320) {
-        freqStep = 0.2;
+        if (isDecimalMarkerRoundOff) {
+            freqStep = 0.5;
+        } else {
+            freqStep = 0.2;
+        }
     } else {
         freqStep = 0.1;
     }
@@ -1068,7 +1082,7 @@ function drawGraph() {
 
     // Round minFreq if setting is enabled
     let minFreqRounded = minFreq;
-    minFreqRounded = decimalMarkerRoundOff ? Math.ceil(minFreqRounded) : minFreqRounded;
+    minFreqRounded = isDecimalMarkerRoundOff ? Math.ceil(minFreqRounded) : minFreqRounded;
 
     for (let freq = minFreqRounded; freq <= maxFreq; freq += freqStep) {
         const x = xOffset + (freq - minFreq) * xScale;
