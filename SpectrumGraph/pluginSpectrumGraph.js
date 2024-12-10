@@ -33,7 +33,7 @@ let xOffset = 30;
 let sigArray = [];
 let enableSmoothing = localStorage.getItem('enableSpectrumGraphSmoothing') === 'true'; // Smooths the graph edges
 let fixedVerticalGraph = localStorage.getItem('enableSpectrumGraphFixedVerticalGraph') === 'true'; // Fixed or dynamic vertical graph based on peak signal strength
-let signalText = localStorage.getItem('signalUnit');
+let signalText = localStorage.getItem('signalUnit') || 'dbf';
 let sigOffset, xSigOffset, sigDesc, prevSignalText;
 let removeUpdateTextTimeout;
 let updateText;
@@ -137,7 +137,7 @@ fetchFirstLine().then(version => {
 prevSignalText = signalText;
 
 function signalUnits() {
-    signalText = localStorage.getItem('signalUnit');
+    signalText = localStorage.getItem('signalUnit') || 'dbf';
     switch (signalText) {
         case 'dbuv':
             sigOffset = 11;
