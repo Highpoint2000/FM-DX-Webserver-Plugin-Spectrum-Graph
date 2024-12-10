@@ -21,7 +21,7 @@ This plugin scans the FM radio band in under 1.5 seconds, then displayed in a sp
 - **`tuningBandwidth`**: Values supported: 0, 56, 64, 72, 84, 97, 114, 133, 151, 168, 184, 200, 217, 236, 254, 287, 311.   
 
 > [!IMPORTANT]
-> **TEF668X radio** requires the latest **TEF6686_ESP32 v2.11.9 beta** or newer firmware, available from the FMDX.org Discord server.
+> **TEF668X radio** requires at least **TEF6686_ESP32 v2.11.9 beta** firmware, available from the FMDX.org Discord server.
 
 v1.1.3
 ------
