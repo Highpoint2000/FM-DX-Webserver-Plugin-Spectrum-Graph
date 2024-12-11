@@ -10,21 +10,22 @@ This plugin scans the FM radio band in under 1.5 seconds, then displayed in a sp
 * Transfer `SpectrumGraph` folder, and `SpectrumGraph.js` to FM-DX Webserver `plugins` folder
 * Restart FM-DX Webserver if required
 * Login to Adminstrator Panel and enable plugin
+* Restart FM-DX Webserver again if required
 * Server-side configuration options stored in `/plugins_configs/SpectrumGraph.json`
 * Client-side configuration options located in `SpectrumGraph.js`
 
-### **SpectrumGraph.json configuration**
- 
-- **`rescanDelay`**: Value in seconds of time elasped since the end of previous scan before a new scan can be requested.   
-- **`tuningRange`**: Value in MHz of side frequencies to scan. Value of 0 scans the entire FM/OIRT band.   
-- **`tuningStepSize`**: Value in kHz of the tuning stepsize. Recommended values are either 100 or 50.   
-- **`tuningBandwidth`**: Values supported: 0, 56, 64, 72, 84, 97, 114, 133, 151, 168, 184, 200, 217, 236, 254, 287, 311.   
-
-> [!TIP]
-> **tuningStepSize** offers a granular level of control, enabling the graph's stepsize to be adjusted from 100 kHz to 50 kHz for more precise RF signal analysis.
-
 > [!IMPORTANT]
 > **TEF668X radio** requires at least **TEF6686_ESP32 v2.11.9 beta** firmware, available from the FMDX.org Discord server.
+
+## SpectrumGraph.json
+ 
+- **`rescanDelay`**: Number of seconds elapsed since the previous scan before a new scan can be initiated.   
+- **`tuningRange`**: Side frequencies to scan, in MHz. A value of 0 scans the entire FM/OIRT band.   
+- **`tuningStepSize`**: Tuning step size, in kHz. Recommended values are either 100 or 50.   
+- **`tuningBandwidth`**: Supported bandwidth values are 0, 56, 64, 72, 84, 97, 114, 133, 151, 168, 184, 200, 217, 236, 254, 287, and 311.   
+
+> [!TIP]
+> The granular control by **`tuningStepSize`** allows the graph's step size to be adjusted from 100 kHz to 50 kHz, enabling more precise RF signal analysis.
 
 v1.1.3
 ------
