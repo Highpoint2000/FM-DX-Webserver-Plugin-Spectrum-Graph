@@ -1017,8 +1017,7 @@ function drawGraph() {
     if (fixedVerticalGraph) {
         maxSig = 80; // Fixed vertical graph
     } else {
-        maxSig = Math.max(...sigArray.map(d => d.sig)); // Dynamic vertical graph
-        if (maxSig === 0) maxSig = 0.01; // Prevent infinite calculation
+        maxSig = Math.max(...sigArray.map(d => d.sig)) || 0.01; // Dynamic vertical graph
     }
 
     const maxFreq = Math.max(...sigArray.map(d => d.freq));
