@@ -20,6 +20,9 @@ This plugin scans the FM radio band in under 1.5 seconds, then displayed in a sp
 - **`tuningStepSize`**: Value in kHz of the tuning stepsize. Recommended values are either 100 or 50.   
 - **`tuningBandwidth`**: Values supported: 0, 56, 64, 72, 84, 97, 114, 133, 151, 168, 184, 200, 217, 236, 254, 287, 311.   
 
+> [!TIP]
+> **tuningStepSize** offers a granular level of control, enabling the graph's stepsize to be adjusted from 100 kHz to 50 kHz for more precise RF signal analysis.
+
 > [!IMPORTANT]
 > **TEF668X radio** requires at least **TEF6686_ESP32 v2.11.9 beta** firmware, available from the FMDX.org Discord server.
 
