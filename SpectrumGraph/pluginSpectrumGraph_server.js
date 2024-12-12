@@ -1,6 +1,8 @@
 /*
-    Spectrum Graph v1.1.3 by AAD
-    Server-side code
+    Spectrum Graph v1.1.4 by AAD
+    https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
+
+    //// Server-side code ////
 */
 
 const pluginName = "Spectrum Graph";

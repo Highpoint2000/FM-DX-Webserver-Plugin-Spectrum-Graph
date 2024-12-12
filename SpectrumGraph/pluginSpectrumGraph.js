@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.1.3 by AAD
+    Spectrum Graph v1.1.4 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 */
 
@@ -15,7 +15,7 @@ const useButtonSpacingBetweenCanvas = true;     // Other plugins are likely to o
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const pluginVersion = '1.1.3';
+const pluginVersion = '1.1.4';
 
 // const variables
 const debug = false;
@@ -23,7 +23,7 @@ const dataFrequencyElement = document.getElementById('data-frequency');
 const drawGraphDelay = 10;
 const canvasHeightSmall = 120;
 const canvasHeightLarge = 175;
-const topValue = borderlessTheme ? '10px' : '14px';
+const topValue = borderlessTheme ? '12px' : '14px';
 
 // let variables
 let dataFrequencyValue;
@@ -35,13 +35,20 @@ let ipAddress = 'unknown host';
 let antennaCurrent = 0;
 let xOffset = 30;
 let sigArray = [];
-let enableSmoothing = localStorage.getItem('enableSpectrumGraphSmoothing') === 'true'; // Smooths the graph edges
-let fixedVerticalGraph = localStorage.getItem('enableSpectrumGraphFixedVerticalGraph') === 'true'; // Fixed or dynamic vertical graph based on peak signal strength
+let minSig; // Graph value
+let maxSig; // Graph value
+let dynamicPadding = 1;
+let localStorageItem = {};
 let signalText = localStorage.getItem('signalUnit') || 'dbf';
 let sigOffset, xSigOffset, sigDesc, prevSignalText;
 let removeUpdateTextTimeout;
 let updateText;
 let wsSendSocket;
+
+// localStorage variables
+localStorageItem.enableSmoothing = localStorage.getItem('enableSpectrumGraphSmoothing') === 'true';                 // Smooths the graph edges
+localStorageItem.fixedVerticalGraph = localStorage.getItem('enableSpectrumGraphFixedVerticalGraph') === 'true';     // Fixed/dynamic vertical graph based on peak signal
+localStorageItem.isAutoBaseline = localStorage.getItem('enableSpectrumGraphAutoBaseline') === 'true';               // Auto baseline
 
 // Create Spectrum Graph button
 const SPECTRUM_BUTTON_NAME = 'SPECTRUM';
@@ -248,8 +255,9 @@ function ScanButton() {
     spectrumButton.id = 'spectrum-scan-button';
     spectrumButton.setAttribute('aria-label', 'Spectrum Graph Scan');
     spectrumButton.classList.add('rectangular-spectrum-button', 'tooltip');
-    spectrumButton.setAttribute('data-tooltip', 'Perform manual scan');
+    spectrumButton.setAttribute('data-tooltip', 'Perform Manual Scan');
     spectrumButton.innerHTML = '<i class="fa-solid fa-rotate"></i>';
+    spectrumButton.addEventListener('contextmenu', e => e.preventDefault());
 
     // Add event listener
     let canSendMessage = true;
@@ -317,44 +325,50 @@ function ScanButton() {
     styleElement.innerHTML = rectangularButtonStyle;
     document.head.appendChild(styleElement);
 
-    SmoothingOnOffButton();
-    ToggleFixedOrDynamicButton();
+    /*
+    ToggleAddButton(Id,                             Tooltip,                    FontAwesomeIcon,    localStorageVariable,   localStorageKey,        ButtonPosition)
+    */
+    ToggleAddButton('smoothing-on-off-button',      'Smooth Graph Edges',       'chart-area',       'enableSmoothing',      'Smoothing',            '56');
+    ToggleAddButton('fixed-dynamic-on-off-button',  'Relative/Fixed Scale',     'arrows-up-down',   'fixedVerticalGraph',   'FixedVerticalGraph',   '96');
+    ToggleAddButton('auto-baseline-on-off-button',  'Auto Baseline',            'a',                'isAutoBaseline',       'AutoBaseline',         '136');
+    initTooltips();
     if (updateText) insertUpdateText(updateText);
 }
 
-// Create scan button to refresh graph
-function SmoothingOnOffButton() {
+// Create button
+function ToggleAddButton(Id, Tooltip, FontAwesomeIcon, localStorageVariable, localStorageKey, ButtonPosition) {
     // Remove any existing instances of button
-    const existingButtons = document.querySelectorAll('.smoothing-on-off-button');
+    const existingButtons = document.querySelectorAll(`.${Id}`);
     existingButtons.forEach(button => button.remove());
 
     // Create new button
-    const smoothingOnOffButton = document.createElement('button');
-    smoothingOnOffButton.id = 'smoothing-on-off-button';
-    smoothingOnOffButton.setAttribute('aria-label', 'Toggle On/Off');
-    smoothingOnOffButton.classList.add('smoothing-on-off-button', 'tooltip');
-    smoothingOnOffButton.setAttribute('data-tooltip', 'Smooth graph edges');
-    smoothingOnOffButton.innerHTML = '<i class="fa-solid fa-chart-area"></i>';
+    const toggleButton = document.createElement('button');
+    toggleButton.id = `${Id}`;
+    toggleButton.setAttribute('aria-label', 'Toggle On/Off');
+    toggleButton.classList.add(`${Id}`, 'tooltip');
+    toggleButton.setAttribute('data-tooltip', `${Tooltip}`);
+    toggleButton.innerHTML = `<i class="fa-solid fa-${FontAwesomeIcon}"></i>`;
+    toggleButton.addEventListener('contextmenu', e => e.preventDefault());
 
     // Button state (off by default)
     let isOn = false;
 
-    if (enableSmoothing) {
+    if (localStorageItem[localStorageVariable]) {
         isOn = true;
-        smoothingOnOffButton.classList.toggle('button-on', isOn);
+        toggleButton.classList.toggle('button-on', isOn);
     }
 
     // Add event listener for toggle functionality
-    smoothingOnOffButton.addEventListener('click', () => {
+    toggleButton.addEventListener('click', () => {
         isOn = !isOn; // Toggle state
-        smoothingOnOffButton.classList.toggle('button-on', isOn); // Highlight if "on"
+        toggleButton.classList.toggle('button-on', isOn); // Highlight if "on"
 
         if (isOn) {
-            enableSmoothing = true;
-            localStorage.setItem('enableSpectrumGraphSmoothing', 'true');
+            localStorageItem[localStorageVariable] = true;
+            localStorage.setItem(`enableSpectrumGraph${localStorageKey}`, 'true');
         } else {
-            enableSmoothing = false;
-            localStorage.setItem('enableSpectrumGraphSmoothing', 'false');
+            localStorageItem[localStorageVariable] = false;
+            localStorage.setItem(`enableSpectrumGraph${localStorageKey}`, 'false');
         }
         setTimeout(drawGraph, drawGraphDelay);
     });
@@ -365,12 +379,12 @@ function SmoothingOnOffButton() {
         const canvasContainer = canvas.parentElement;
         if (canvasContainer && canvasContainer.classList.contains('canvas-container')) {
             canvasContainer.style.position = 'relative';
-            canvasContainer.appendChild(smoothingOnOffButton);
+            canvasContainer.appendChild(toggleButton);
 
             // Adjust position to be left of spectrum button if it exists
             const spectrumButton = document.getElementById('spectrum-scan-button');
             if (spectrumButton) {
-                smoothingOnOffButton.style.right = `${parseInt(spectrumButton.style.right, 10) + 40}px`; // 40px offset
+                toggleButton.style.right = `${parseInt(spectrumButton.style.right, 10) + 40}px`; // 40px offset
             }
         } else {
             console.error('Spectrum Graph: Parent container is not .canvas-container');
@@ -381,10 +395,10 @@ function SmoothingOnOffButton() {
 
     // Add styles
     const buttonStyle = `
-    .smoothing-on-off-button {
+    .${Id} {
         position: absolute;
         top: ${topValue};
-        right: 56px;
+        right: ${ButtonPosition}px;
         z-index: 10;
         opacity: 0.8;
         border-radius: 5px;
@@ -398,10 +412,10 @@ function SmoothingOnOffButton() {
         justify-content: center;
         box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.8);
     }
-    .smoothing-on-off-button i {
+    .${Id} i {
         font-size: 14px;
     }
-    .smoothing-on-off-button.button-on {
+    .${Id}.button-on {
         filter: brightness(150%) contrast(110%);
         box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.5), 0 0 10px var(--color-5);
     }
@@ -410,97 +424,6 @@ function SmoothingOnOffButton() {
     const styleElement = document.createElement('style');
     styleElement.innerHTML = buttonStyle;
     document.head.appendChild(styleElement);
-}
-
-// Create fixed/dynamic button for vertical graph
-function ToggleFixedOrDynamicButton() {
-    // Remove any existing instances of button
-    const existingButtons = document.querySelectorAll('.fixed-dynamic-on-off-button');
-    existingButtons.forEach(button => button.remove());
-
-    // Create new button
-    const toggleFixedOrDynamicButton = document.createElement('button');
-    toggleFixedOrDynamicButton.id = 'fixed-dynamic-on-off-button';
-    toggleFixedOrDynamicButton.setAttribute('aria-label', 'Toggle On/Off');
-    toggleFixedOrDynamicButton.classList.add('fixed-dynamic-on-off-button', 'tooltip');
-    toggleFixedOrDynamicButton.setAttribute('data-tooltip', 'Toggle fixed/dynamic signal range');
-    toggleFixedOrDynamicButton.innerHTML = '<i class="fa-solid fa-arrows-up-down"></i>';
-
-    // Button state (off by default)
-    let isOn = false;
-
-    if (fixedVerticalGraph) {
-        isOn = true;
-        toggleFixedOrDynamicButton.classList.toggle('button-on', isOn);
-    }
-
-    // Add event listener for toggle functionality
-    toggleFixedOrDynamicButton.addEventListener('click', () => {
-        isOn = !isOn; // Toggle state
-        toggleFixedOrDynamicButton.classList.toggle('button-on', isOn); // Highlight if "on"
-
-        if (isOn) {
-            fixedVerticalGraph = true;
-            localStorage.setItem('enableSpectrumGraphFixedVerticalGraph', 'true');
-        } else {
-            fixedVerticalGraph = false;
-            localStorage.setItem('enableSpectrumGraphFixedVerticalGraph', 'false');
-        }
-        setTimeout(drawGraph, drawGraphDelay);
-    });
-
-    // Locate the canvas and its parent container
-    const canvas = document.getElementById('sdr-graph');
-    if (canvas) {
-        const canvasContainer = canvas.parentElement;
-        if (canvasContainer && canvasContainer.classList.contains('canvas-container')) {
-            canvasContainer.style.position = 'relative';
-            canvasContainer.appendChild(toggleFixedOrDynamicButton);
-
-            // Adjust position to be left of spectrum button if it exists
-            const spectrumButton = document.getElementById('spectrum-scan-button');
-            if (spectrumButton) {
-                toggleFixedOrDynamicButton.style.right = `${parseInt(spectrumButton.style.right, 10) + 40}px`; // 40px offset
-            }
-        } else {
-            console.error('Spectrum Graph: Parent container is not .canvas-container');
-        }
-    } else {
-        console.error('Spectrum Graph: #sdr-graph not found');
-    }
-
-    // Add styles
-    const buttonStyle = `
-    .fixed-dynamic-on-off-button {
-        position: absolute;
-        top: ${topValue};
-        right: 96px;
-        z-index: 10;
-        opacity: 0.8;
-        border-radius: 5px;
-        padding: 5px 10px;
-        cursor: pointer;
-        transition: background-color 0.3s, color 0.3s, border-color 0.3s;
-        width: 32px;
-        height: 24px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.8);
-    }
-    .fixed-dynamic-on-off-button i {
-        font-size: 14px;
-    }
-    .fixed-dynamic-on-off-button.button-on {
-        filter: brightness(150%) contrast(110%);
-        box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.5), 0 0 10px var(--color-5);
-    }
-`;
-
-    const styleElement = document.createElement('style');
-    styleElement.innerHTML = buttonStyle;
-    document.head.appendChild(styleElement);
-    initTooltips();
 }
 
 // Function to display update text
@@ -655,6 +578,10 @@ function displaySignalCanvas() {
     const sdrCanvasFixedDynamicButton = document.getElementById('fixed-dynamic-on-off-button');
     if (sdrCanvasFixedDynamicButton) {
         sdrCanvasFixedDynamicButton.style.display = 'none';
+    }
+    const sdrCanvasAutoBaselineButton = document.getElementById('auto-baseline-on-off-button');
+    if (sdrCanvasAutoBaselineButton) {
+        sdrCanvasAutoBaselineButton.style.display = 'none';
     }
     const sdrCanvasUpdateText = document.querySelector('.spectrum-graph-update-text');
     if (sdrCanvasUpdateText) {
@@ -869,8 +796,9 @@ function initializeCanvasInteractions() {
             `;
 
             // Calculate position of circle
+            const adjustedSignalValue = signalValue - minSig;
             const circleX = xOffset + (closestPoint.freq - minFreq) * xScale;
-            const circleY = canvas.height - (signalValue * yScale) - 20;
+            const circleY = canvas.height - (adjustedSignalValue * yScale) - 20;
 
             // Draw circle at tip of the signal
             ctx.beginPath();
@@ -933,7 +861,21 @@ function initializeCanvasInteractions() {
     }
 
     // Add event listeners
-    canvas.addEventListener('mousemove', updateTooltip);
+    let lastTimeThrottled = 0;
+    const throttleDelay = 20; // ms
+
+    function updateTooltipThrottled(event) {
+        const currentTimeThrottled = Date.now();
+        const timeDiffThrottled = currentTimeThrottled - lastTimeThrottled;
+
+        if (timeDiffThrottled >= throttleDelay) {
+            lastTimeThrottled = currentTimeThrottled;
+            updateTooltip(event);
+        }
+    }
+
+    // Use throttled mousemove
+    canvas.addEventListener('mousemove', updateTooltipThrottled);
     canvas.addEventListener('mouseleave', () => {
         tooltip.style.visibility = 'hidden';
         setTimeout(() => {
@@ -1012,16 +954,22 @@ function drawGraph() {
         return;
     }
 
-    // Determine max signal value dynamically
-    let maxSig;
-    if (fixedVerticalGraph) {
-        maxSig = 80; // Fixed vertical graph
+    // Determine min signal value dynamically
+    if (localStorageItem.isAutoBaseline) {
+        minSig = Math.max(Math.min(...sigArray.map(d => d.sig)) - dynamicPadding, -1); // Dynamic vertical graph
     } else {
-        maxSig = Math.max(...sigArray.map(d => d.sig)) || 0.01; // Dynamic vertical graph
+        minSig = 0; // Fixed min vertical graph
     }
 
-    const maxFreq = Math.max(...sigArray.map(d => d.freq));
-    const minFreq = Math.min(...sigArray.map(d => d.freq));
+    // Determine max signal value dynamically
+    if (!localStorageItem.fixedVerticalGraph) {
+        maxSig = (Math.max(...sigArray.map(d => d.sig)) - minSig) + dynamicPadding || 0.01; // Dynamic vertical graph
+    } else {
+        maxSig = 80 - minSig; // Fixed max vertical graph
+    }
+
+    const minFreq = Math.min(...sigArray.map(d => d.freq)) || 88;
+    const maxFreq = Math.max(...sigArray.map(d => d.freq)) || 108;
 
     if (maxFreq - minFreq <= 12) isDecimalMarkerRoundOff = false;
 
@@ -1055,7 +1003,7 @@ function drawGraph() {
 
     // Scaling factors
     const xScale = (width - xOffset) / freqRange;
-    const yScale = (height - 40) / maxSig;
+    const yScale = (height - 30) / maxSig;
 
     const colorText = getComputedStyle(document.documentElement).getPropertyValue('--color-5').trim();
     const colorBackground = getComputedStyle(document.documentElement).getPropertyValue('--color-1-transparent').trim();
@@ -1112,24 +1060,25 @@ function drawGraph() {
         sigLabelStep = maxSig / 4;
     }
     let labels = [];
+    console.log(sigLabelStep);
     for (let sig = 0; sig <= maxSig; sig += sigLabelStep) {
-        const y = height - 20 - sig * yScale;
+        const y = height - 20.5 - sig * yScale;
         if (signalText === 'dbm') {
             // dBm spacing
-            let tempDbfSig = (sig - sigOffset).toFixed(0);
+            let tempDbfSig = ((sig - sigOffset) + minSig).toFixed(0);
             // dBm
             if (sig && tempDbfSig > -100) ctx.fillText(tempDbfSig, ((xOffset - xSigOffset) + 8), y + 3);
             if (sig && tempDbfSig <= -100) ctx.fillText(tempDbfSig, ((xOffset - xSigOffset)) + 1.5, y + 3);
         } else if (signalText === 'dbuv') {
             // dBuV number spacing
-            let tempDbuvSig = ((sig - sigOffset) + 1).toFixed(0);
+            let tempDbuvSig = (((sig - sigOffset) + 1) + minSig).toFixed(0);
             // dBuV using +1 for even numbering
             if (sig && tempDbuvSig >= 10) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset), y + 3);
             if (sig && tempDbuvSig > 0 && tempDbuvSig < 10) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset) + 6.5, y + 3);
             if (sig && tempDbuvSig == 0) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset) + 5.5, y + 3);
             if (sig && tempDbuvSig < 0) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset) + 1.5, y + 3);
         } else if (signalText === 'dbf') {
-            let tempDbfSig = (sig - sigOffset).toFixed(0);
+            let tempDbfSig = ((sig - sigOffset) + minSig).toFixed(0);
             // dBf
             if (sig && tempDbfSig >= 10) ctx.fillText(tempDbfSig, (xOffset - xSigOffset), y + 3);
             if (sig && tempDbfSig > 0 && tempDbfSig < 10)
@@ -1191,21 +1140,21 @@ function drawGraph() {
     // Draw graph line
     sigArray.forEach((point, index) => {
         if (point.sig < 0) point.sig = 0;
-        const x = xOffset + (point.freq - minFreq) * xScale;
-        const y = height - 20 - point.sig * yScale;
+        const x = (xOffset + (point.freq - minFreq) * xScale);
+        const y = (height - 20 - (point.sig - minSig) * yScale);
         if (index === 0) {
-            ctx.lineTo(x, y - 1);
+            ctx.lineTo(x, (y - 1));
         } else {
-            ctx.lineTo(x, y - 1);
+            ctx.lineTo(x, (y - 1));
         }
     });
 
-    if (enableSmoothing) {
+    if (localStorageItem.enableSmoothing) {
         ctx.fillStyle = gradient;
         ctx.strokeStyle = gradient;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        ctx.lineWidth = 3; // Smoothing
+        ctx.lineWidth = 2; // Smoothing
         ctx.stroke();
     }
 
@@ -1229,7 +1178,7 @@ function drawGraph() {
         const x = xOffset + (freq - minFreq) * xScale;
         if (freq !== minFreq) {
             ctx.beginPath();
-            ctx.moveTo(x, 0);
+            ctx.moveTo(x, 8);
             ctx.lineTo(x, height - 20);
             ctx.stroke();
         }
@@ -1259,7 +1208,7 @@ function drawGraph() {
     ctx.fillStyle = 'rgba(224, 224, 240, 0.3)';
 
     // Draw vertical highlight region
-    ctx.fillRect(leftX, 0, rightX - leftX, height - 20); // From top to bottom of graph
+    ctx.fillRect(leftX, 8, rightX - leftX, height - 28); // From top to bottom of graph
 
     const colorLines = getComputedStyle(document.documentElement).getPropertyValue('--color-5').trim();
 
@@ -1269,12 +1218,12 @@ function drawGraph() {
     } else {
         ctx.strokeStyle = '#98989f';
     }
-    ctx.lineWidth = 0.8;
+    ctx.lineWidth = 1.5;
 
     ctx.beginPath();
     ctx.moveTo((xOffset - 0.5), height - 19.5); // X-axis
     ctx.lineTo(width + 0.5, height - 19.5);
-    ctx.moveTo((xOffset - 0.5), 0.5); // Y-axis
+    ctx.moveTo((xOffset - 0.5), 8.5); // Y-axis
     ctx.lineTo((xOffset - 0.5), height - 19.5);
     ctx.stroke();
 
