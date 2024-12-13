@@ -15,7 +15,7 @@ This plugin scans the FM radio band in under 1.5 seconds, then displayed in a sp
 * Client-side configuration options located in `SpectrumGraph.js`
 
 > [!IMPORTANT]
-> **TEF668X radio** requires at least **TEF6686_ESP32 v2.11.9 beta** firmware, available from the FMDX.org Discord server.
+> **TEF668X radio** requires **TEF6686_ESP32 v2.11.9 beta** firmware, and only this version, available from the FMDX.org Discord server.
 
 ## SpectrumGraph.json
  
