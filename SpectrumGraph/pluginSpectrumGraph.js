@@ -1060,7 +1060,6 @@ function drawGraph() {
         sigLabelStep = maxSig / 4;
     }
     let labels = [];
-    console.log(sigLabelStep);
     for (let sig = 0; sig <= maxSig; sig += sigLabelStep) {
         const y = height - 20.5 - sig * yScale;
         if (signalText === 'dbm') {
