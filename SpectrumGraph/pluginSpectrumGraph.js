@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.1.4 by AAD
+    Spectrum Graph v1.1.5 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 */
 
@@ -11,18 +11,19 @@ const checkUpdates = true;                      // Checks online if a new versio
 const borderlessTheme = true;                   // Background and text colours match FM-DX Webserver theme
 const enableMouseScrollWheel = true;            // Allow the mouse scroll wheel to tune inside the graph
 const decimalMarkerRoundOff = true;             // Round frequency markers to the nearest integer
+const extendGraphHeight = true;                 // Disable if it causes any visual issues
 const useButtonSpacingBetweenCanvas = true;     // Other plugins are likely to override this if set to false
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const pluginVersion = '1.1.4';
+const pluginVersion = '1.1.5';
 
 // const variables
 const debug = false;
 const dataFrequencyElement = document.getElementById('data-frequency');
 const drawGraphDelay = 10;
-const canvasHeightSmall = 120;
-const canvasHeightLarge = 175;
+const canvasHeightSmall = extendGraphHeight ? 132 : 120;
+const canvasHeightLarge = extendGraphHeight ? 188 : 176;
 const topValue = borderlessTheme ? '12px' : '14px';
 
 // let variables
@@ -511,7 +512,9 @@ function checkAdminMode() {
 async function initializeGraph() {
     try {
         // Fetch the initial data from /api
-        const response = await fetch('/api');
+        const basePath = window.location.pathname.replace(/\/?$/, '/');
+        const apiPath = `${basePath}api`.replace(/\/+/g, '/');
+        const response = await fetch(apiPath);
         if (!response.ok) {
             throw new Error(`Spectrum Graph failed to fetch data: ${response.status}`);
         }
@@ -641,12 +644,16 @@ function displaySdrGraph() {
 
 // Adjust dataCanvas height based on window height
 function adjustSdrGraphCanvasHeight() {
-    if (window.innerHeight < 860 && window.innerWidth > 480) {
-        canvas.height = canvasHeightSmall;
+    if (window.matchMedia("(orientation: portrait)").matches) {
+        displaySignalCanvas(); // Ensure it doesn't appear in portrait mode
     } else {
-        canvas.height = canvasHeightLarge;
+        if (window.innerHeight < 860 && window.innerWidth > 480) {
+            canvas.height = canvasHeightSmall;
+        } else {
+            canvas.height = canvasHeightLarge;
+        }
+        drawGraph();
     }
-    drawGraph();
 }
 
 
@@ -682,8 +689,6 @@ function toggleSpectrum() {
 
         // Set initial height with delay
         setTimeout(adjustSdrGraphCanvasHeight, 400);
-        // Adjust height dynamically on window resize
-        window.addEventListener('resize', adjustSdrGraphCanvasHeight);
     } else {
         // Update button appearance
         SpectrumButton.classList.remove('bg-color-4');
@@ -904,7 +909,16 @@ const canvas = document.createElement('canvas');
 canvas.id = 'sdr-graph';
 canvas.position = 'relative';
 
-canvas.width = 1170;
+function resizeCanvas() {
+    let fixedWidth = 1170;
+    let paddingWidth = 10;
+    if (window.innerWidth < fixedWidth + paddingWidth) canvas.width = window.innerWidth - paddingWidth; else canvas.width = fixedWidth;
+    adjustSdrGraphCanvasHeight();
+}
+resizeCanvas();
+
+window.addEventListener("resize", resizeCanvas);
+
 if (window.innerHeight < 860 && window.innerWidth > 480) {
     canvas.height = canvasHeightSmall;
 } else {
@@ -1071,17 +1085,19 @@ function drawGraph() {
         } else if (signalText === 'dbuv') {
             // dBuV number spacing
             let tempDbuvSig = (((sig - sigOffset) + 1) + minSig).toFixed(0);
+            if (tempDbuvSig == -0) tempDbuvSig = 0;
             // dBuV using +1 for even numbering
             if (sig && tempDbuvSig >= 10) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset), y + 3);
             if (sig && tempDbuvSig > 0 && tempDbuvSig < 10) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset) + 6.5, y + 3);
             if (sig && tempDbuvSig == 0) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset) + 5.5, y + 3);
-            if (sig && tempDbuvSig < 0) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset) + 1.5, y + 3);
+            if (sig && tempDbuvSig < 0 && tempDbuvSig > -10) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset) + 1.5, y + 3);
+            if (sig && tempDbuvSig <= -10) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset) - 5.5, y + 3);
         } else if (signalText === 'dbf') {
             let tempDbfSig = ((sig - sigOffset) + minSig).toFixed(0);
             // dBf
+            if (tempDbfSig == -0) tempDbfSig = 0;
             if (sig && tempDbfSig >= 10) ctx.fillText(tempDbfSig, (xOffset - xSigOffset), y + 3);
-            if (sig && tempDbfSig > 0 && tempDbfSig < 10)
-                if (sig) ctx.fillText(tempDbfSig, (xOffset - xSigOffset) + 6.5, y + 3);
+            if (sig && tempDbfSig > 0 && tempDbfSig < 10) ctx.fillText(tempDbfSig, (xOffset - xSigOffset) + 6.5, y + 3);
             if (sig && tempDbfSig == 0) ctx.fillText(tempDbfSig, (xOffset - xSigOffset) + 5.5, y + 3);
             if (sig && tempDbfSig < 0) ctx.fillText(tempDbfSig, (xOffset - xSigOffset) + 1.5, y + 3);
         }
@@ -1173,7 +1189,7 @@ function drawGraph() {
     ctx.setLineDash([1, 2]); // Dotted lines
 
     // Vertical grid lines (for each frequency step)
-    for (let freq = minFreqRounded; freq <= maxFreq; freq += freqStep) {
+    for (let freq = minFreqRounded; freq.toFixed(2) <= maxFreq; freq += freqStep) {
         const x = xOffset + (freq - minFreq) * xScale;
         if (freq !== minFreq) {
             ctx.beginPath();
