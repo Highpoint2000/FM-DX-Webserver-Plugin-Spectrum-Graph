@@ -644,7 +644,7 @@ function displaySdrGraph() {
 
 // Adjust dataCanvas height based on window height
 function adjustSdrGraphCanvasHeight() {
-    if (window.matchMedia("(orientation: portrait)").matches) {
+    if (window.matchMedia("(orientation: portrait)").matches && /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
         displaySignalCanvas(); // Ensure it doesn't appear in portrait mode
     } else {
         if (window.innerHeight < 860 && window.innerWidth > 480) {
