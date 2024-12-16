@@ -27,6 +27,9 @@ This plugin scans the FM radio band in under 1.5 seconds, then displayed in a sp
 > [!TIP]
 > The granular control by **`tuningStepSize`** allows the graph's step size to be adjusted from 100 kHz to 50 kHz, enabling more precise RF signal analysis.
 
+### Known issues
+* The plugin currently doesn't function if tuning is locked.
+
 v1.1.5
 ------
 * Slight graph height increase
