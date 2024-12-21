@@ -210,12 +210,12 @@ async function TextWebSocket(messageData) {
 
             textSocket.onclose = () => {
                 logInfo(`Spectrum Graph closed WebSocket`);
-                setTimeout(() => TextWebSocket(messageData), 1000); // Pass messageData when reconnecting
+                setTimeout(() => TextWebSocket(messageData), 2000); // Pass messageData when reconnecting
             };
 
         } catch (error) {
             logError(`Spectrum Graph failed to set up WebSocket:`, error);
-            setTimeout(() => TextWebSocket(messageData), 1000); // Pass messageData when reconnecting
+            setTimeout(() => TextWebSocket(messageData), 2000); // Pass messageData when reconnecting
         }
     }
 }
@@ -236,7 +236,7 @@ async function ExtraWebSocket() {
 
             extraSocket.onclose = () => {
                 logInfo(`Spectrum Graph WebSocket closed.`);
-                setTimeout(ExtraWebSocket, 1000); // Reconnect after delay
+                setTimeout(ExtraWebSocket, 2000); // Reconnect after delay
             };
 
             extraSocket.onmessage = (event) => {
@@ -273,7 +273,7 @@ async function ExtraWebSocket() {
             };
         } catch (error) {
             logError(`Spectrum Graph: Failed to set up WebSocket:`, error);
-            setTimeout(ExtraWebSocket, 1000); // Reconnect on failure
+            setTimeout(ExtraWebSocket, 2000); // Reconnect on failure
         }
     }
 }
@@ -395,7 +395,7 @@ function waitForTextSocket() { // First run begins when default frequency is det
             if (Number(config.defaultFreq).toFixed(2) === Number(currentFrequency).toFixed(2)) {
                 isFrequencyMatched = true;
                 clearInterval(intervalId);
-                initialDelay = 800;
+                initialDelay = 2000;
                 firstRun();
             }
         }, checkFrequencyInterval);
