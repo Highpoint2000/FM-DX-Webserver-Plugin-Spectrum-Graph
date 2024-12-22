@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.1.5 by AAD
+    Spectrum Graph v1.1.6 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 
     //// Server-side code ////
@@ -17,6 +17,7 @@ const WebSocket = require('ws');
 const config = require('./../../config.json');
 const { logInfo, logWarn, logError } = require('../../server/console');
 const datahandlerReceived = require('../../server/datahandler'); // To grab signal strength data
+const endpointsRouter = require('../../server/endpoints');
 
 // const variables
 const debug = false;
@@ -25,7 +26,7 @@ const externalWsUrl = `ws://127.0.0.1:${webserverPort}`;
 
 // let variables
 let extraSocket, textSocket, textSocketLost, messageParsed, messageParsedTimeout, startTime, tuningLowerLimitScan, tuningUpperLimitScan, tuningLowerLimitOffset, tuningUpperLimitOffset, debounceTimer;
-let ipAddress = 'localhost';
+let ipAddress = externalWsUrl;
 let currentFrequency = 0;
 let initialDelay = 0;
 let lastRestartTime = 0;
@@ -45,6 +46,32 @@ let BWradio = 0;
 const rootDir = path.dirname(require.main.filename); // Locate directory where index.js is located
 const configFolderPath = path.join(rootDir, 'plugins_configs');
 const configFilePath = path.join(configFolderPath, 'SpectrumGraph.json');
+
+// Function to create custom router
+let spectrumData = {
+    sd: null
+};
+
+function customRouter() {
+    endpointsRouter.get('/spectrum-graph-plugin', (req, res) => {
+        const pluginHeader = req.get('X-Plugin-Name') || 'NoPlugin';
+
+        if (pluginHeader === 'SpectrumPlugin') {
+            ipAddress = req.headers['x-forwarded-for']?.split(',')[0] || req.connection.remoteAddress;
+            res.json(spectrumData);
+        } else {
+            res.status(403).json({ error: 'Unauthorised' });
+        }
+    });
+
+    logInfo('Spectrum Graph: Custom router added to endpoints router.');
+}
+
+// Update endpoint
+function updateSpectrumData(newData) {
+    spectrumData = { ...spectrumData, ...newData };
+}
+customRouter();
 
 // Default configuration
 let rescanDelay = 3; // seconds
@@ -250,7 +277,6 @@ async function ExtraWebSocket() {
                     // Handle messages
                     if (!messageParsedTimeout) {
                         if (message.type === 'spectrum-graph' && message.value?.status === 'scan') {
-                            ipAddress = message.value?.ip.slice(0, 64) || 'unknown IP';
                             if (!isFirstRun && !isScanRunning) restartScan('scan');
                         } else if (!message.value?.status === 'scan') {
                             logError(`Spectrum Graph unknown command received:`, message);
@@ -294,18 +320,30 @@ datahandlerReceived.handleData = function(wss, receivedData, rdsWss) {
     for (const receivedLine of receivedLines) {
         if (receivedLine.startsWith('U')) {
             interceptedUData = receivedLine.substring(1); // Store 'U' data
-            datahandlerReceived.dataToSend.sd = interceptedUData; // Update dataToSend.sd
-            if (antennaSwitch) datahandlerReceived.dataToSend[`sd${antennaCurrent}`] = interceptedUData; // Update sd0, sd1, sd2, sd3
+            // Update endpoint
+            const newData = { sd: interceptedUData };
+            updateSpectrumData(newData);
+
+            if (antennaSwitch) {
+                // Update endpoint
+                const newData = { [`sd${antennaCurrent}`]: interceptedUData };
+                updateSpectrumData(newData);
+            }
             break;
         }
         if (receivedLine.startsWith('Z')) {
             interceptedZData = receivedLine.substring(1); // Store 'Z' data
-            datahandlerReceived.dataToSend.ad = interceptedZData; // Update dataToSend.ad
+            // Update endpoint
+            const newData = { ad: interceptedZData };
+            updateSpectrumData(newData);
+
             if (antennaSwitch) antennaCurrent = Number(interceptedZData);
 
             let uValueNew = null;
 
-            if (antennaSwitch && datahandlerReceived.dataToSend[`sd${antennaCurrent}`]) uValueNew = datahandlerReceived.dataToSend[`sd${antennaCurrent}`];
+            if (antennaSwitch && spectrumData[`sd${antennaCurrent}`]) {
+                uValueNew = spectrumData[`sd${antennaCurrent}`];
+            }
 
             if (uValueNew !== null) {
                 let uValue = uValueNew;
@@ -325,7 +363,9 @@ datahandlerReceived.handleData = function(wss, receivedData, rdsWss) {
                     isScanHalted(true);
                     uValue = null;
                     setTimeout(() => {
-                        datahandlerReceived.dataToSend[`sd${antennaCurrent}`] = null; // Reset value to clear incomplete data
+                        // Update endpoint
+                        const newData = { [`sd${antennaCurrent}`]: null };
+                        updateSpectrumData(newData);
                     }, 200);
                 }
 
@@ -374,7 +414,9 @@ if (antennaResponse.enabled) { // Continue if 'enabled' is true
     // Assign null to antennas enabled
     [1, 2, 3, 4].forEach((i) => {
         if (antennaResponse[`ant${i}`].enabled) {
-            datahandlerReceived.dataToSend[`sd${i - 1}`] = null; // Assign null value to enabled antennas
+            // Update endpoint
+            const newData = { [`sd${i - 1}`]: null };
+            updateSpectrumData(newData);
         }
     });
 }
@@ -540,17 +582,19 @@ function waitForServer() {
             logError(`Spectrum Graph: textSocket is not defined.`);
         }
         retryFailed = true;
-        setTimeout(waitForServer, 1000);
+        setTimeout(waitForServer, 2000);
     }
 }
 waitForServer();
 
+// Begin scan
 function startScan(command) {
     // Exit if scan is running
     if (isScanRunning) return;
 
-    // Begin scan
-    datahandlerReceived.dataToSend.sd = null;
+    // Update endpoint
+    const newData = { sd: null };
+    updateSpectrumData(newData);
 
     // Restrict to config tuning limit, else 0-108 MHz
     let tuningLimit = config.webserver.tuningLimit;
@@ -684,7 +728,9 @@ function startScan(command) {
                 isScanHalted(true);
                 uValue = null;
                 setTimeout(() => {
-                    datahandlerReceived.dataToSend.sd = null; // Reset value to clear incomplete data
+                    // Update endpoint
+                    const newData = { sd: null };
+                    updateSpectrumData(newData);
                 }, 200);
             }
             if (debug) console.log(uValue);

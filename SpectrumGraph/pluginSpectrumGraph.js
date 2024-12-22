@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.1.5 by AAD
+    Spectrum Graph v1.1.6 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 */
 
@@ -9,6 +9,7 @@
 
 const checkUpdates = true;                      // Checks online if a new version is available
 const borderlessTheme = true;                   // Background and text colours match FM-DX Webserver theme
+const enableMouseClickToTune = true;            // Allow the mouse to tune inside the graph
 const enableMouseScrollWheel = true;            // Allow the mouse scroll wheel to tune inside the graph
 const decimalMarkerRoundOff = true;             // Round frequency markers to the nearest integer
 const extendGraphHeight = true;                 // Disable if it causes any visual issues
@@ -16,7 +17,7 @@ const useButtonSpacingBetweenCanvas = true;     // Other plugins are likely to o
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const pluginVersion = '1.1.5';
+const pluginVersion = '1.1.6';
 
 // const variables
 const debug = false;
@@ -32,7 +33,6 @@ let isCanvasHovered = false; // Used for mouse scoll wheel
 let isDecimalMarkerRoundOff = decimalMarkerRoundOff;
 let isGraphOpen = false;
 let isSpectrumOn = false;
-let ipAddress = 'unknown host';
 let antennaCurrent = 0;
 let xOffset = 30;
 let sigArray = [];
@@ -267,8 +267,7 @@ function ScanButton() {
             const message = JSON.stringify({
                 type: 'spectrum-graph',
                 value: {
-                    status: 'scan',
-                    ip: ipAddress,
+                    status: 'scan'
                 },
             });
             function sendMessage(message) {
@@ -480,14 +479,6 @@ function insertUpdateText(updateText) {
     resetUpdateTextTimeout();
 }
 
-// Who is the user?
-fetch('https://api.ipify.org?format=json')
-    .then((response) => response.json())
-    .then((data) => {
-        ipAddress = data.ip;
-    })
-    .catch((error) => console.error('Spectrum Graph error fetching IP:', error));
-
 // Check if administrator code
 var isTuneAuthenticated = false;
 var isTunerLocked = false;
@@ -513,8 +504,15 @@ async function initializeGraph() {
     try {
         // Fetch the initial data from /api
         const basePath = window.location.pathname.replace(/\/?$/, '/');
-        const apiPath = `${basePath}api`.replace(/\/+/g, '/');
-        const response = await fetch(apiPath);
+        const apiPath = `${basePath}spectrum-graph-plugin`.replace(/\/+/g, '/');
+
+        const response = await fetch(apiPath, {
+            method: 'GET',
+            headers: {
+                'X-Plugin-Name': 'SpectrumPlugin'
+            }
+        });
+
         if (!response.ok) {
             throw new Error(`Spectrum Graph failed to fetch data: ${response.status}`);
         }
@@ -830,6 +828,7 @@ function initializeCanvasInteractions() {
     }
 
     function handleClick(event) {
+        if (!enableMouseClickToTune) return;
         const rect = canvas.getBoundingClientRect();
         const mouseX = event.clientX - rect.left;
 
