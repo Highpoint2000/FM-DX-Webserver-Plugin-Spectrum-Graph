@@ -502,7 +502,7 @@ function checkAdminMode() {
 // Fetch any available data on page load
 async function initializeGraph() {
     try {
-        // Fetch the initial data from /api
+        // Fetch the initial data from endpoint
         const basePath = window.location.pathname.replace(/\/?$/, '/');
         const apiPath = `${basePath}spectrum-graph-plugin`.replace(/\/+/g, '/');
 
