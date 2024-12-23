@@ -1,7 +1,7 @@
 // Plugin configuration, this is used in the administration when plugins are loaded
 var pluginConfig = {
     name: 'Spectrum Graph',
-    version: '1.1.6',
+    version: '1.1.7',
     author: 'AAD',
     frontEndPath: 'SpectrumGraph/pluginSpectrumGraph.js'
 }

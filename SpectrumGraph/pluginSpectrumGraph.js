@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.1.6 by AAD
+    Spectrum Graph v1.1.7 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 */
 
@@ -509,7 +509,7 @@ async function initializeGraph() {
         const response = await fetch(apiPath, {
             method: 'GET',
             headers: {
-                'X-Plugin-Name': 'SpectrumPlugin'
+                'X-Plugin-Name': 'SpectrumGraphPlugin'
             }
         });
 
