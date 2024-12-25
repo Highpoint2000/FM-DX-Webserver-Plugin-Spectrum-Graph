@@ -1,791 +1,1329 @@
 /*
     Spectrum Graph v1.1.7 by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
-
-    //// Server-side code ////
 */
 
-const pluginName = "Spectrum Graph";
+(() => {
 
-// Library imports
-const express = require('express');
-const fs = require('fs');
-const path = require('path');
-const WebSocket = require('ws');
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// File imports
-const config = require('./../../config.json');
-const { logInfo, logWarn, logError } = require('../../server/console');
-const datahandlerReceived = require('../../server/datahandler'); // To grab signal strength data
-const endpointsRouter = require('../../server/endpoints');
+const checkUpdates = true;                      // Checks online if a new version is available
+const borderlessTheme = true;                   // Background and text colours match FM-DX Webserver theme
+const enableMouseClickToTune = true;            // Allow the mouse to tune inside the graph
+const enableMouseScrollWheel = true;            // Allow the mouse scroll wheel to tune inside the graph
+const decimalMarkerRoundOff = true;             // Round frequency markers to the nearest integer
+const extendGraphHeight = true;                 // Disable if it causes any visual issues
+const useButtonSpacingBetweenCanvas = true;     // Other plugins are likely to override this if set to false
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+const pluginVersion = '1.1.7';
 
 // const variables
 const debug = false;
-const webserverPort = config.webserver.webserverPort || 8080;
-const externalWsUrl = `ws://127.0.0.1:${webserverPort}`;
+const dataFrequencyElement = document.getElementById('data-frequency');
+const drawGraphDelay = 10;
+const canvasHeightSmall = extendGraphHeight ? 132 : 120;
+const canvasHeightLarge = extendGraphHeight ? 188 : 176;
+const topValue = borderlessTheme ? '12px' : '14px';
 
 // let variables
-let extraSocket, textSocket, textSocketLost, messageParsed, messageParsedTimeout, startTime, tuningLowerLimitScan, tuningUpperLimitScan, tuningLowerLimitOffset, tuningUpperLimitOffset, debounceTimer;
-let ipAddress = externalWsUrl;
-let currentFrequency = 0;
-let initialDelay = 0;
-let lastRestartTime = 0;
-let nowTime = Date.now();
-let isFirstRun = true;
-let isScanRunning = false;
-let frequencySocket = null;
+let dataFrequencyValue;
+let isCanvasHovered = false; // Used for mouse scoll wheel
+let isDecimalMarkerRoundOff = decimalMarkerRoundOff;
+let isGraphOpen = false;
+let isSpectrumOn = false;
+let antennaCurrent = 0;
+let xOffset = 30;
 let sigArray = [];
+let minSig; // Graph value
+let maxSig; // Graph value
+let dynamicPadding = 1;
+let localStorageItem = {};
+let signalText = localStorage.getItem('signalUnit') || 'dbf';
+let sigOffset, xSigOffset, sigDesc, prevSignalText;
+let removeUpdateTextTimeout;
+let updateText;
+let wsSendSocket;
+let Sensitivity = 0;
+let ScannerMode = '';
+let SpectrumLimiterValue = 0; 
 
-// Check if module or radio firmware
-let isModule = true; // TEF668X module
-let isFirstFirmwareNotice = false;
-let firmwareType = 'unknown';
-let BWradio = 0;
+// localStorage variables
+localStorageItem.enableSmoothing = localStorage.getItem('enableSpectrumGraphSmoothing') === 'true';                 // Smooths the graph edges
+localStorageItem.fixedVerticalGraph = localStorage.getItem('enableSpectrumGraphFixedVerticalGraph') === 'true';     // Fixed/dynamic vertical graph based on peak signal
+localStorageItem.isAutoBaseline = localStorage.getItem('enableSpectrumGraphAutoBaseline') === 'true';               // Auto baseline
 
-// Define paths used for config
-const rootDir = path.dirname(require.main.filename); // Locate directory where index.js is located
-const configFolderPath = path.join(rootDir, 'plugins_configs');
-const configFilePath = path.join(configFolderPath, 'SpectrumGraph.json');
+// Create Spectrum Graph button
+const SPECTRUM_BUTTON_NAME = 'SPECTRUM';
+const aSpectrumCss = `
+#spectrum-graph-button {
+border-radius: 0px;
+width: 100px;
+height: 22px;
+position: relative;
+margin-top: 16px;
+margin-left: 5px;
+right: 0px;
+}
+`
+$("<style>")
+    .prop("type", "text/css")
+    .html(aSpectrumCss)
+    .appendTo("head");
 
-// Function to create custom router
-let spectrumData = {
-    sd: null
-};
+const aSpectrumText = $('<strong>', {
+    class: 'aspectrum-text',
+    html: SPECTRUM_BUTTON_NAME
+});
 
-function customRouter() {
-    endpointsRouter.get('/spectrum-graph-plugin', (req, res) => {
-        const pluginHeader = req.get('X-Plugin-Name') || 'NoPlugin';
+const aSpectrumButton = $('<button>', {
+    id: 'spectrum-graph-button',
+});
 
-        if (pluginHeader === 'SpectrumGraphPlugin') {
-            ipAddress = req.headers['x-forwarded-for']?.split(',')[0] || req.connection.remoteAddress;
-            res.json(spectrumData);
-        } else {
-            res.status(403).json({ error: 'Unauthorised' });
-        }
+aSpectrumButton.append(aSpectrumText);
+
+function initializeSpectrumButton() {
+
+    let buttonWrapper = $('#button-wrapper');
+    if (buttonWrapper.length < 1) {
+        buttonWrapper = createDefaultButtonWrapper();
+    }
+
+    if (buttonWrapper.length) {
+        aSpectrumButton.addClass('hide-phone bg-color-2')
+        buttonWrapper.append(aSpectrumButton);
+    }
+    displaySignalCanvas();
+}
+
+// Create a default button wrapper if it does not exist
+function createDefaultButtonWrapper() {
+    const wrapperElement = $('.tuner-info');
+    if (wrapperElement.length) {
+        const buttonWrapper = $('<div>', {
+            id: 'button-wrapper'
+        });
+        buttonWrapper.addClass('button-wrapper');
+        wrapperElement.append(buttonWrapper);
+        if (useButtonSpacingBetweenCanvas) wrapperElement.append(document.createElement('br'));
+        return buttonWrapper;
+    } else {
+        console.error('Spectrum Graph: Standard button location not found. Unable to add button.');
+        return null;
+    }
+}
+
+$(window).on('load', function() {
+    setTimeout(initializeSpectrumButton, 200);
+
+    aSpectrumButton.on('click', function() {
+        toggleSpectrum();
     });
+});
 
-    logInfo('Spectrum Graph: Custom router added to endpoints router.');
-}
+// Create the WebSocket connection
+const currentURL = new URL(window.location.href);
+const WebserverURL = currentURL.hostname;
+const WebserverPath = currentURL.pathname.replace(/setup/g, '');
+const WebserverPORT = currentURL.port || (currentURL.protocol === 'https:' ? '443' : '80');
+const protocol = currentURL.protocol === 'https:' ? 'wss:' : 'ws:';
+const WEBSOCKET_URL = `${protocol}//${WebserverURL}:${WebserverPORT}${WebserverPath}data_plugins`;
 
-// Update endpoint
-function updateSpectrumData(newData) {
-    spectrumData = { ...spectrumData, ...newData };
-}
-customRouter();
-
-// Default configuration
-let rescanDelay = 3; // seconds
-let tuningRange = 0; // MHz
-let tuningStepSize = 100; // kHz
-let tuningBandwidth = 56; // kHz
-let showIncompleteData = false; // Display incomplete data
-
-const defaultConfig = {
-    rescanDelay: 3,
-    tuningRange: 0,
-    tuningStepSize: 100,
-    tuningBandwidth: 56,
-    showIncompleteData: false
-};
-
-// Order of keys in configuration file
-const configKeyOrder = ['rescanDelay', 'tuningRange', 'tuningStepSize', 'tuningBandwidth', 'showIncompleteData'];
-
-// Function to ensure folder and file exist
-function checkConfigFile() {
-    // Check if plugins_configs folder exists
-    if (!fs.existsSync(configFolderPath)) {
-        logInfo(`${pluginName}: Creating plugins_configs folder...`);
-        fs.mkdirSync(configFolderPath, { recursive: true }); // Create folder recursively if needed
-    }
-
-    // Check if json file exists
-    if (!fs.existsSync(configFilePath)) {
-        logInfo(`${pluginName}: Creating default SpectrumGraph.json file...`);
-        saveDefaultConfig(); // Save default configuration
-    }
-}
-checkConfigFile();
-
-// Function to load configuration file
-function loadConfigFile(isReloaded) {
-    try {
-        if (fs.existsSync(configFilePath)) {
-            const configContent = fs.readFileSync(configFilePath, 'utf-8');
-            let config = JSON.parse(configContent);
-
-            let configModified = false;
-
-            // Check and add missing options with default values
-            for (let key in defaultConfig) {
-                if (!(key in config)) {
-                    logInfo(`${pluginName}: Missing ${key} in config. Adding default value.`);
-                    config[key] = defaultConfig[key]; // Add missing keys with default value
-                    configModified = true; // Mark as modified
-                }
-            }
-
-            // Ensure variables are numbers or booleans
-            rescanDelay = !isNaN(Number(config.rescanDelay)) ? Number(config.rescanDelay) : defaultConfig.rescanDelay;
-            tuningRange = !isNaN(Number(config.tuningRange)) ? Number(config.tuningRange) : defaultConfig.tuningRange;
-            tuningStepSize = !isNaN(Number(config.tuningStepSize)) ? Number(config.tuningStepSize) : defaultConfig.tuningStepSize;
-            tuningBandwidth = !isNaN(Number(config.tuningBandwidth)) ? Number(config.tuningBandwidth) : defaultConfig.tuningBandwidth;
-            showIncompleteData = typeof config.showIncompleteData === 'boolean' ? config.showIncompleteData : defaultConfig.showIncompleteData;
-
-            // Save the updated config if there were any modifications
-            if (configModified) {
-                saveUpdatedConfig(config);
-            }
-
-            logInfo(`${pluginName}: Configuration ${isReloaded || ''}loaded successfully.`);
-        } else {
-            logInfo(`${pluginName}: Configuration file not found. Creating default configuration.`);
-            saveDefaultConfig();
-        }
-    } catch (error) {
-        logInfo(`${pluginName}: Error loading configuration file: ${error.message}. Resetting to default.`);
-        saveDefaultConfig();
-    }
-}
-
-// Function to save default configuration file
-function saveDefaultConfig() {
-    const formattedConfig = JSON.stringify(defaultConfig, null, 4); // Pretty print with 4 spaces
-    if (!fs.existsSync(configFolderPath)) {
-        fs.mkdirSync(configFolderPath, { recursive: true });
-    }
-    fs.writeFileSync(configFilePath, formattedConfig);
-    loadConfigFile(); // Reload variables
-}
-
-// Function to save updated configuration after modification
-function saveUpdatedConfig(config) {
-    // Create a new object with keys in specified order
-    const orderedConfig = {};
-    configKeyOrder.forEach(key => {
-        if (key in config) {
-            orderedConfig[key] = config[key];
-        }
-    });
-
-    const formattedConfig = JSON.stringify(orderedConfig, null, 4); // Pretty print with 4 spaces
-    fs.writeFileSync(configFilePath, formattedConfig); // Save updated config to file
-}
-
-// Function to watch configuration file for changes
-function watchConfigFile() {
-    fs.watch(configFilePath, (eventType) => {
-        if (eventType === 'change') {
-            clearTimeout(debounceTimer); // Clear any existing debounce timer
-            debounceTimer = setTimeout(() => {
-                loadConfigFile('re');
-            }, 800);
-        }
-    });
-}
-
-// Initialise configuration system
-function initConfigSystem() {
-    loadConfigFile(); // Load configuration values initially
-    watchConfigFile(); // Monitor for changes
-    logInfo(`${pluginName}: Rescan Delay: ${rescanDelay} sec, Tuning Range: ${tuningRange ? tuningRange + ' MHz' : 'Full MHz'}, Tuning Steps: ${tuningStepSize} kHz, Bandwidth: ${tuningBandwidth} kHz`);
-}
-
-initConfigSystem();
-
-// Function for 'text' WebSocket
-async function TextWebSocket(messageData) {
-    if (!textSocket || textSocket.readyState === WebSocket.CLOSED) {
+// WebSocket to send request and receive response
+async function setupSendSocket() {
+    if (!wsSendSocket || wsSendSocket.readyState === WebSocket.CLOSED) {
         try {
-            textSocket = new WebSocket(`${externalWsUrl}/text`);
+            wsSendSocket = new WebSocket(WEBSOCKET_URL);
+            wsSendSocket.onopen = () => {
+                console.log(`Spectrum Graph connected WebSocket`);
 
-            textSocket.onopen = () => {
-                // Spectrum Graph connected to WebSocket
+                wsSendSocket.onmessage = function(event) {
+                    // Parse incoming JSON data
+                    const data = JSON.parse(event.data);
 
-                // Launch startup antenna sequence 
-                waitForTextSocket();
-
-                textSocket.onmessage = (event) => {
-                    try {
-                        // Parse incoming message data
-                        const messageData = JSON.parse(event.data);
-                        // console.log(messageData);
-
-                        if (!isSerialportAlive || isSerialportRetrying) {
-                            if (textSocketLost) {
-                                clearTimeout(textSocketLost);
-                            }
-
-                            textSocketLost = setTimeout(() => {
-                                // WebSocket reconnection required after serialport connection loss
-                                logInfo(`Spectrum Graph connection lost, creating new WebSocket.`);
-                                if (textSocket) {
-                                    try {
-                                        textSocket.close(1000, 'Normal closure');
-                                    } catch (error) {
-                                        logInfo(`Spectrum Graph error closing WebSocket:`, error);
-                                    }
-                                }
-                                textSocketLost = null;
-                            }, 10000);
-                        }
-
-                    } catch (error) {
-                        logError(`Spectrum Graph failed to parse WebSocket message:`, error);
+                    if (data.type === 'spectrum-graph') {
+                        console.log(`Spectrum Graph command sent`);
                     }
+
+                    // Handle 'sigArray' data
+                    if (data.type === 'sigArray') {
+                        console.log(`Spectrum Graph received sigArray.`);
+                        sigArray = data.value;
+                        if (sigArray.length > 0) {
+                            setTimeout(drawGraph, drawGraphDelay);
+                        }
+                        if (debug) {
+                            if (Array.isArray(data.value)) {
+                                // Process sigArray
+                                data.value.forEach(item => {
+                                    console.log(`freq: ${item.freq}, sig: ${item.sig}`);
+                                });
+                            } else {
+                                console.error('Expected array for sigArray, but received:', data.value);
+                            }
+                        }
+                    }
+					
+					if (data.type === 'Scanner') {
+						const eventData = JSON.parse(event.data);
+	
+						if (eventData === '') {
+							const initialMessage = createMessage('request');
+							if (wsSendSocket && wsSendSocket.readyState === WebSocket.OPEN) {
+								wsSendSocket.send(JSON.stringify(initialMessage));
+							}
+						}
+
+						if (eventData.value.Sensitivity !== undefined && eventData.value.Sensitivity !== null) {
+							const parsedSensitivity = parseFloat(eventData.value.Sensitivity);
+							if (!isNaN(parsedSensitivity)) {
+								Sensitivity = parsedSensitivity;
+							}
+						}
+
+						if (eventData.value.SpectrumLimiterValue !== undefined && eventData.value.SpectrumLimiterValue !== null) {
+							const parsedSpectrumLimiterValue = parseFloat(eventData.value.SpectrumLimiterValue);
+							if (!isNaN(parsedSpectrumLimiterValue)) {
+								SpectrumLimiterValue = parsedSpectrumLimiterValue;
+							}
+						}
+
+						if (eventData.value.ScannerMode !== undefined && eventData.value.ScannerMode !== null && eventData.value.ScannerMode !== '') {
+							ScannerMode = eventData.value.ScannerMode;
+						}
+
+					}				
+					
                 };
             };
 
-            textSocket.onerror = (error) => logError(`Spectrum Graph WebSocket error:`, error);
-
-            textSocket.onclose = () => {
-                logInfo(`Spectrum Graph closed WebSocket`);
-                setTimeout(() => TextWebSocket(messageData), 2000); // Pass messageData when reconnecting
+            wsSendSocket.onclose = (event) => {
+                setTimeout(function() {
+                    console.log(`Spectrum Graph: WebSocket closed:`, event);
+                }, 400);
+                setTimeout(setupSendSocket, 5000); // Reconnect after 5 seconds
             };
-
         } catch (error) {
-            logError(`Spectrum Graph failed to set up WebSocket:`, error);
-            setTimeout(() => TextWebSocket(messageData), 2000); // Pass messageData when reconnecting
+            console.error("Failed to setup Send WebSocket:", error);
+            setTimeout(setupSendSocket, 5000); // Retry after 5 seconds
         }
     }
 }
+// WebSocket and scanner button initialisation
+setTimeout(setupSendSocket, 400);
 
-// Function for 'data_plugins' WebSocket
-async function ExtraWebSocket() {
-    if (!extraSocket || extraSocket.readyState === WebSocket.CLOSED) {
+// Function to check for updates
+async function fetchFirstLine() {
+    if (checkUpdates) {
+        const urlCheckForUpdate = 'https://raw.githubusercontent.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph/refs/heads/main/version'
+
         try {
-            extraSocket = new WebSocket(`${externalWsUrl}/data_plugins`);
+            const response = await fetch(urlCheckForUpdate);
+            if (!response.ok) {
+                throw new Error(`Spectrum Graph update check HTTP error! status: ${response.status}`);
+            }
 
-            extraSocket.onopen = () => {
-                // Spectrum Graph connected to '/data_plugins'
-            };
+            const text = await response.text();
+            const firstLine = text.split('\n')[0]; // Extract first line
 
-            extraSocket.onerror = (error) => {
-                logError(`Spectrum Graph: WebSocket error:`, error);
-            };
+            const version = firstLine;
 
-            extraSocket.onclose = () => {
-                logInfo(`Spectrum Graph WebSocket closed.`);
-                setTimeout(ExtraWebSocket, 2000); // Reconnect after delay
-            };
-
-            extraSocket.onmessage = (event) => {
-                try {
-                    const message = JSON.parse(event.data);
-                    //logInfo(JSON.stringify(message));
-
-                    // Ignore messages that aren't for spectrum-graph
-                    if (!(message.type === 'spectrum-graph') || !(message.value && 'status' in message.value)) return;
-
-                    // Handle messages
-                    if (!messageParsedTimeout) {
-                        if (message.type === 'spectrum-graph' && message.value?.status === 'scan') {
-                            if (!isFirstRun && !isScanRunning) restartScan('scan');
-                        } else if (!message.value?.status === 'scan') {
-                            logError(`Spectrum Graph unknown command received:`, message);
-                        }
-                        messageParsedTimeout = true;
-
-                        if (messageParsed) { // Might not be needed as messageParsedTimeout will prevent it running multiple times
-                            clearInterval(messageParsed);
-                        }
-                        messageParsed = setTimeout(() => {
-                            if (messageParsed) {
-                                clearInterval(messageParsed);
-                                messageParsedTimeout = false;
-                            }
-                        }, 150); // Reduce spamming
-                    }
-                } catch (error) {
-                    logError(`Spectrum Graph: Failed to handle message:`, error);
-                }
-            };
+            return version;
         } catch (error) {
-            logError(`Spectrum Graph: Failed to set up WebSocket:`, error);
-            setTimeout(ExtraWebSocket, 2000); // Reconnect on failure
+            console.error('Spectrum Graph error fetching file:', error);
+            return null;
         }
     }
 }
-ExtraWebSocket();
-TextWebSocket();
 
-// Intercepted data storage
-let interceptedUData = null;
-let interceptedZData = null;
-
-// Wrapper to intercept 'U' data
-const originalHandleData = datahandlerReceived.handleData;
-
-// datahandler code
-datahandlerReceived.handleData = function(wss, receivedData, rdsWss) {
-    const receivedLines = receivedData.split('\n');
-
-    for (const receivedLine of receivedLines) {
-        if (receivedLine.startsWith('U')) {
-            interceptedUData = receivedLine.substring(1); // Store 'U' data
-
-            // Remove trailing comma and space in TEF668X radio firmware
-            if (interceptedUData && interceptedUData.endsWith(', ')) {
-                interceptedUData = interceptedUData.slice(0, -2);
-                isModule = false; // Firmware now detected as TEF668X radio
-                firmwareType = "TEF668X radio";
-            } else {
-                isModule = true;
-                firmwareType = "TEF668X module";
-            }
-
-            interceptedUData = interceptedUData.replaceAll(" ", ""); // Remove any spaces regardless of firmware
-
-            // Update endpoint
-            const newData = { sd: interceptedUData };
-            updateSpectrumData(newData);
-
-            if (antennaSwitch) {
-                // Update endpoint
-                const newData = { [`sd${antennaCurrent}`]: interceptedUData };
-                updateSpectrumData(newData);
-            }
-            break;
-        }
-        if (receivedLine.startsWith('Z')) {
-            interceptedZData = receivedLine.substring(1); // Store 'Z' data
-            // Update endpoint
-            const newData = { ad: interceptedZData };
-            updateSpectrumData(newData);
-
-            if (antennaSwitch) antennaCurrent = Number(interceptedZData);
-
-            let uValueNew = null;
-
-            if (antennaSwitch && spectrumData[`sd${antennaCurrent}`]) {
-                uValueNew = spectrumData[`sd${antennaCurrent}`];
-            }
-
-            if (uValueNew !== null) {
-                let uValue = uValueNew;
-
-                // Possibly interrupted
-                if (uValue && uValue.endsWith(',')) {
-                    isScanHalted(true);
-                    // uValue.slice or null
-                    if (showIncompleteData) {
-                        uValue = uValue.slice(0, -1);
-                    } else {
-                        uValue = null;
-                    }
-                    setTimeout(() => {
-                        // Update endpoint
-                        const newData = { [`sd${antennaCurrent}`]: uValue }; // uValue or null
-                        updateSpectrumData(newData);
-                        logWarn(`Spectrum Graph: Spectrum scan appears incomplete.`);
-                    }, 200);
-                }
-
-                if (uValue !== null) { // Ensure uValue is not null before splitting
-                    // Split the response into pairs and process each one
-                    sigArray = uValue.split(',').map(pair => {
-                        const [freq, sig] = pair.split('=');
-                        return { freq: (freq / 1000).toFixed(2), sig: parseFloat(sig).toFixed(1) };
-                    });
-
-                    const messageClient = JSON.stringify({
-                        type: 'sigArray',
-                        value: sigArray,
-                    });
-                    extraSocket.send(messageClient);
-                } else {
-                    logInfo(`Spectrum Graph: Invalid 'uValue' for Ant. ${antennaCurrent}, clearing incomplete data.`);
-                }
-                isScanHalted(true);
-            }
-            break;
+// Check for updates
+fetchFirstLine().then(version => {
+    if (checkUpdates && version) {
+        if (version !== pluginVersion) {
+            updateText = "There is a new version of this plugin available";
+            console.log(`Spectrum Graph: ${updateText}`)
         }
     }
+});
 
-    // Call original handleData function
-    originalHandleData(wss, receivedData, rdsWss);
-};
+// Signal units
+prevSignalText = signalText;
 
-// Configure antennas
-let antennaCurrent; // Will remain 'undefined' if antenna switch is disabled
-let antennaSwitch = false;
-let antennaResponse = { enabled: false };
-if (config.antennas) antennaResponse = config.antennas;
-
-if (antennaResponse.enabled) { // Continue if 'enabled' is true
-    antennaSwitch = true;
-    antennaCurrent = 0; // Default antenna
-    const antennas = ['ant1', 'ant2', 'ant3', 'ant4'];
-
-    let antennaStatus = {};
-
-    antennas.forEach(ant => {
-        antennaStatus[ant] = antennaResponse[ant].enabled; // antennaResponse.antX.enabled set to true or false
-    });
-
-    // Assign null to antennas enabled
-    [1, 2, 3, 4].forEach((i) => {
-        if (antennaResponse[`ant${i}`].enabled) {
-            // Update endpoint
-            const newData = { [`sd${i - 1}`]: null };
-            updateSpectrumData(newData);
-        }
-    });
+function signalUnits() {
+    signalText = localStorage.getItem('signalUnit') || 'dbf';
+    switch (signalText) {
+        case 'dbuv':
+            sigOffset = 11;
+            xOffset = 30;
+            xSigOffset = 20;
+            sigDesc = 'dBµV';
+            break;
+        case 'dbm':
+            sigOffset = 120;
+            xOffset = 36;
+            xSigOffset = 32;
+            sigDesc = 'dBm';
+            break;
+        default:
+            sigOffset = 0;
+            xOffset = 30;
+            xSigOffset = 20;
+            sigDesc = 'dBf';
+    }
+    if (signalText !== prevSignalText) {
+        setTimeout(drawGraph, drawGraphDelay);
+        console.log(`Spectrum Graph: Signal unit changed.`);
+    }
+    prevSignalText = signalText;
 }
+setInterval(signalUnits, 3000);
 
-// Function for first run on startup
-function waitForTextSocket() { // First run begins when default frequency is detected
-    // If default frequency is enabled in config
-    isFirstRun = true;
-    isFirstFirmwareNotice = false; // Reset to false
-    isModule = true; // Reset to true
-    if (config.enableDefaultFreq) {
-        const checkFrequencyInterval = 100;
-        const timeoutDuration = 30000;
+// Create scan button to refresh graph
+function ScanButton() {
+    // Remove any existing instances of button
+    const existingButtons = document.querySelectorAll('.rectangular-spectrum-button');
+    existingButtons.forEach(button => button.remove());
 
-        let isFrequencyMatched = false;
+    // Create new button for controlling spectrum
+    const spectrumButton = document.createElement('button');
+    spectrumButton.id = 'spectrum-scan-button';
+    spectrumButton.setAttribute('aria-label', 'Spectrum Graph Scan');
+    spectrumButton.classList.add('rectangular-spectrum-button', 'tooltip');
+    spectrumButton.setAttribute('data-tooltip', 'Perform Manual Scan');
+    spectrumButton.innerHTML = '<i class="fa-solid fa-rotate"></i>';
+    spectrumButton.addEventListener('contextmenu', e => e.preventDefault());
 
-        let intervalId = setInterval(() => {
-            if (Number(config.defaultFreq).toFixed(2) === Number(currentFrequency).toFixed(2)) {
-                isFrequencyMatched = true;
-                clearInterval(intervalId);
-                initialDelay = 2000;
-                firstRun();
-            }
-        }, checkFrequencyInterval);
-
-        setTimeout(() => {
-            if (!isFrequencyMatched) {
-                clearInterval(intervalId);
-                logError("Spectrum Graph: Default Frequency does not match current frequency, continuing anyway.");
-                initialDelay = 30000;
-                firstRun();
-            }
-        }, timeoutDuration);
-    } else {
-        // If default frequency is disabled in config
-        async function waitForFrequency(timeout = 10000) { // First run begins when frequency is detected
-            const checkInterval = 100;
-
-            return new Promise((resolve, reject) => {
-                const startTime = Date.now();
-
-                const checkFrequency = setInterval(() => {
-                    const freq = Number(currentFrequency).toFixed(2);
-
-                    if (freq > 0.00) {
-                        clearInterval(checkFrequency);
-                        initialDelay = 3000;
-                        firstRun();
-                        return;
-                    }
-
-                    if (Date.now() - startTime >= timeout) {
-                        clearInterval(checkFrequency);
-                        reject('Spectrum Graph: Current frequency not found in time');
-                    }
-                }, checkInterval);
+    // Add event listener
+    let canSendMessage = true;
+    if (isTuningAllowed) {
+        spectrumButton.addEventListener('click', () => {
+            const message = JSON.stringify({
+                type: 'spectrum-graph',
+                value: {
+                    status: 'scan'
+                },
             });
-        }
+            function sendMessage(message) {
+                if (!canSendMessage || !wsSendSocket) return;
 
-        waitForFrequency()
-            .then(message => logInfo(message))
-            .catch(error => logError(error));
-    }
+                if (wsSendSocket) wsSendSocket.send(message);
+                canSendMessage = false;
 
-    function firstRun() {
-        logInfo(`Spectrum Graph: TEF668X and WebSocket connected, preparing first run...`);
-        setTimeout(() => restartScan('scan'), initialDelay); // First run
-
-        // Scan additional antennas
-        if (antennaResponse.enabled) {
-            // Determine scaling factor based on tuningStepSize
-            const scalingFactor = 100 / tuningStepSize;
-
-            const antennas = [
-                { enabled: antennaResponse.ant2.enabled, command: 'Z1' },
-                { enabled: antennaResponse.ant3.enabled, command: 'Z2' },
-                { enabled: antennaResponse.ant4.enabled, command: 'Z3' }
-            ];
-
-            for (let i = 0; i < antennas.length; i++) {
-                const antenna = antennas[i];
-                const command = antenna.enabled ? antenna.command : 'Z0';
-
-                // Calculate time offset considering the scaling factor
-                const timeOffset = initialDelay + (3000 * scalingFactor) + (3600 * i * scalingFactor);
-
-                setTimeout(() => sendCommandToClient(command), timeOffset);
-
-                if (antenna.enabled) {
-                    setTimeout(() => restartScan('scan'), timeOffset + 600);
-                }
+                // Cooldown
+                setTimeout(() => {
+                    canSendMessage = true;
+                }, 1000);
             }
-
-            // End of first run (antenna switch enabled)
-            const finalTimeOffset = initialDelay + (3000 * scalingFactor) + (3600 * antennas.length * scalingFactor);
-            firstRunComplete(finalTimeOffset);
-        } else {
-            // End of first run (antenna switch disabled)
-            firstRunComplete(initialDelay + (3000 * (100 / tuningStepSize)));
-        }
-    }
-}
-
-function firstRunComplete(finalTime) {
-    setTimeout(() => {
-        if (antennaSwitch) sendCommandToClient('Z0');
-
-        if (isFirstRun && !isFirstFirmwareNotice) {
-            isFirstFirmwareNotice = true;
-            logInfo(`Spectrum Graph: Firmware detected as ${firmwareType}.`);
-        }
-
-        isFirstRun = false;
-        logInfo(`Spectrum Graph: Scan button unlocked, first run complete.`);
-    }, finalTime);
-}
-
-function sendCommand(socket, command) {
-    //logInfo(`Spectrum Graph send command:`, command);
-    socket.send(command);
-}
-
-async function sendCommandToClient(command) {
-    try {
-        // Ensure TextWebSocket connection is established
-        await TextWebSocket();
-
-        if (textSocket && textSocket.readyState === WebSocket.OPEN) {
-            //logInfo(`Spectrum Graph: WebSocket connected, sending command`);
-            sendCommand(textSocket, command);
-        } else {
-            logError(`Spectrum Graph: WebSocket is not open. Unable to send command.`);
-        }
-    } catch (error) {
-        logError(`Spectrum Graph: Failed to send command to client:`, error);
-    }
-}
-
-let retryFailed = false;
-
-function waitForServer() {
-    // Wait for server to become available
-    if (typeof textSocket !== "undefined") {
-        textSocket.addEventListener("message", (event) => {
-            let parsedData;
-
-            // Parse JSON data and handle errors gracefully
-            try {
-                parsedData = JSON.parse(event.data);
-            } catch (err) {
-                // Handle error
-                logError(`Spectrum Graph failed to parse JSON:`, err);
-                return; // Skip further processing if JSON is invalid
-            }
-
-            // Check if parsedData contains expected properties
-            const freq = parsedData.freq;
-
-            currentFrequency = freq;
+            sendMessage(message);
         });
-    } else {
-        if (retryFailed) {
-            logError(`Spectrum Graph: textSocket is not defined.`);
+    }
+
+    // Locate canvas and its parent container
+    const canvas = document.getElementById('sdr-graph');
+    if (canvas) {
+        const canvasContainer = canvas.parentElement;
+        if (canvasContainer && canvasContainer.classList.contains('canvas-container')) {
+            canvasContainer.style.position = 'relative';
+            canvas.style.cursor = 'crosshair';
+            canvasContainer.appendChild(spectrumButton);
+        } else {
+            console.error('Parent container is not .canvas-container');
         }
-        retryFailed = true;
-        setTimeout(waitForServer, 2000);
+    } else {
+        console.error('#sdr-graph not found');
+    }
+
+    // Add styles
+    const rectangularButtonStyle = `
+    .rectangular-spectrum-button {
+        position: absolute;
+        top: ${topValue};
+        right: 16px;
+        z-index: 10;
+        opacity: 0.8;
+        border-radius: 5px;
+        padding: 5px 10px;
+        cursor: pointer;
+        transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+        width: 32px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.8);
+    }
+`;
+
+    const styleElement = document.createElement('style');
+    styleElement.innerHTML = rectangularButtonStyle;
+    document.head.appendChild(styleElement);
+
+    /*
+    ToggleAddButton(Id,                             Tooltip,                    FontAwesomeIcon,    localStorageVariable,   localStorageKey,        ButtonPosition)
+    */
+    ToggleAddButton('smoothing-on-off-button',      'Smooth Graph Edges',       'chart-area',       'enableSmoothing',      'Smoothing',            '56');
+    ToggleAddButton('fixed-dynamic-on-off-button',  'Relative/Fixed Scale',     'arrows-up-down',   'fixedVerticalGraph',   'FixedVerticalGraph',   '96');
+    ToggleAddButton('auto-baseline-on-off-button',  'Auto Baseline',            'a',                'isAutoBaseline',       'AutoBaseline',         '136');
+    initTooltips();
+    if (updateText) insertUpdateText(updateText);
+}
+
+// Create button
+function ToggleAddButton(Id, Tooltip, FontAwesomeIcon, localStorageVariable, localStorageKey, ButtonPosition) {
+    // Remove any existing instances of button
+    const existingButtons = document.querySelectorAll(`.${Id}`);
+    existingButtons.forEach(button => button.remove());
+
+    // Create new button
+    const toggleButton = document.createElement('button');
+    toggleButton.id = `${Id}`;
+    toggleButton.setAttribute('aria-label', 'Toggle On/Off');
+    toggleButton.classList.add(`${Id}`, 'tooltip');
+    toggleButton.setAttribute('data-tooltip', `${Tooltip}`);
+    toggleButton.innerHTML = `<i class="fa-solid fa-${FontAwesomeIcon}"></i>`;
+    toggleButton.addEventListener('contextmenu', e => e.preventDefault());
+
+    // Button state (off by default)
+    let isOn = false;
+
+    if (localStorageItem[localStorageVariable]) {
+        isOn = true;
+        toggleButton.classList.toggle('button-on', isOn);
+    }
+
+    // Add event listener for toggle functionality
+    toggleButton.addEventListener('click', () => {
+        isOn = !isOn; // Toggle state
+        toggleButton.classList.toggle('button-on', isOn); // Highlight if "on"
+
+        if (isOn) {
+            localStorageItem[localStorageVariable] = true;
+            localStorage.setItem(`enableSpectrumGraph${localStorageKey}`, 'true');
+        } else {
+            localStorageItem[localStorageVariable] = false;
+            localStorage.setItem(`enableSpectrumGraph${localStorageKey}`, 'false');
+        }
+        setTimeout(drawGraph, drawGraphDelay);
+    });
+
+    // Locate the canvas and its parent container
+    const canvas = document.getElementById('sdr-graph');
+    if (canvas) {
+        const canvasContainer = canvas.parentElement;
+        if (canvasContainer && canvasContainer.classList.contains('canvas-container')) {
+            canvasContainer.style.position = 'relative';
+            canvasContainer.appendChild(toggleButton);
+
+            // Adjust position to be left of spectrum button if it exists
+            const spectrumButton = document.getElementById('spectrum-scan-button');
+            if (spectrumButton) {
+                toggleButton.style.right = `${parseInt(spectrumButton.style.right, 10) + 40}px`; // 40px offset
+            }
+        } else {
+            console.error('Spectrum Graph: Parent container is not .canvas-container');
+        }
+    } else {
+        console.error('Spectrum Graph: #sdr-graph not found');
+    }
+
+    // Add styles
+    const buttonStyle = `
+    .${Id} {
+        position: absolute;
+        top: ${topValue};
+        right: ${ButtonPosition}px;
+        z-index: 10;
+        opacity: 0.8;
+        border-radius: 5px;
+        padding: 5px 10px;
+        cursor: pointer;
+        transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+        width: 32px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.8);
+    }
+    .${Id} i {
+        font-size: 14px;
+    }
+    .${Id}.button-on {
+        filter: brightness(150%) contrast(110%);
+        box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.5), 0 0 10px var(--color-5);
+    }
+`;
+
+    const styleElement = document.createElement('style');
+    styleElement.innerHTML = buttonStyle;
+    document.head.appendChild(styleElement);
+}
+
+// Function to display update text
+function insertUpdateText(updateText) {
+    // Remove any existing update text
+    const existingText = document.querySelector('.spectrum-graph-update-text');
+    if (existingText) existingText.remove();
+
+    // Create new text element
+    const updateTextElement = document.createElement('div');
+    updateTextElement.classList.add('spectrum-graph-update-text');
+    updateTextElement.textContent = updateText;
+
+    // Style the text
+    updateTextElement.style.position = 'absolute';
+    updateTextElement.style.top = '32px';
+    updateTextElement.style.left = '40px';
+    updateTextElement.style.zIndex = '10';
+    updateTextElement.style.color = 'var(--color-5-transparent)';
+    updateTextElement.style.fontSize = '14px';
+    updateTextElement.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+    updateTextElement.style.padding = '4px 8px';
+    updateTextElement.style.borderRadius = '5px';
+    updateTextElement.style.opacity = '1';
+    updateTextElement.addEventListener('mouseenter', () => { updateTextElement.style.opacity = '0.1'; });
+
+    // Locate canvas container
+    const canvas = document.getElementById('sdr-graph');
+    if (canvas) {
+        const canvasContainer = canvas.parentElement;
+        if (canvasContainer && canvasContainer.classList.contains('canvas-container')) {
+            canvasContainer.style.position = 'relative';
+            canvasContainer.appendChild(updateTextElement);
+        } else {
+            console.error('Spectrum Graph: Parent container is not .canvas-container');
+        }
+    } else {
+        console.error('Spectrum Graph: #sdr-graph not found');
+    }
+
+    function resetUpdateTextTimeout() {
+        // Clear any existing timeout
+        clearTimeout(removeUpdateTextTimeout);
+
+        // Begin new timeout
+        removeUpdateTextTimeout = setTimeout(() => {
+            const sdrCanvasUpdateText = document.querySelector('.spectrum-graph-update-text');
+            if (sdrCanvasUpdateText) {
+                sdrCanvasUpdateText.remove();
+            }
+        }, 10000);
+    }
+    resetUpdateTextTimeout();
+}
+
+// Check if administrator code
+var isTuneAuthenticated = false;
+var isTunerLocked = false;
+var isTuningAllowed = false;
+
+document.addEventListener('DOMContentLoaded', () => {
+    checkAdminMode();
+});
+
+// Is the user administrator?
+function checkAdminMode() {
+    const bodyText = document.body.textContent || document.body.innerText;
+    isTunerLocked = !!document.querySelector('.fa-solid.fa-key.pointer.tooltip') || !!document.querySelector('.fa-solid.fa-lock.pointer.tooltip');
+    isTuneAuthenticated = bodyText.includes("You are logged in as an administrator.") || bodyText.includes("You are logged in as an adminstrator.") || bodyText.includes("You are logged in and can control the receiver.");
+    if (isTuneAuthenticated || (isTunerLocked && isTuneAuthenticated) || (!isTunerLocked && !isTuneAuthenticated)) isTuningAllowed = true;
+    if (isTuneAuthenticated) {
+        console.log(`Spectrum Graph: Logged in as administrator`);
     }
 }
-waitForServer();
 
-// Begin scan
-function startScan(command) {
-    // Exit if scan is running
-    if (isScanRunning) return;
+// Fetch any available data on page load
+async function initializeGraph() {
+    try {
+        // Fetch the initial data from endpoint
+        const basePath = window.location.pathname.replace(/\/?$/, '/');
+        const apiPath = `${basePath}spectrum-graph-plugin`.replace(/\/+/g, '/');
 
-    // Update endpoint
-    const newData = { sd: null };
-    updateSpectrumData(newData);
-
-    // Restrict to config tuning limit, else 0-108 MHz
-    let tuningLimit = config.webserver.tuningLimit;
-    let tuningLowerLimit = tuningLimit === false ? 0 : config.webserver.tuningLowerLimit;
-    let tuningUpperLimit = tuningLimit === false ? 108 : config.webserver.tuningUpperLimit;
-
-    if (isNaN(currentFrequency) || currentFrequency === 0.0) {
-        currentFrequency = tuningLowerLimit;
-    }
-
-    // Scan started
-    isScanHalted(false);
-
-    if (textSocket) {
-        tuningLowerLimitScan = Math.round(tuningLowerLimit * 1000);
-        tuningUpperLimitScan = Math.round(tuningUpperLimit * 1000);
-
-        if (tuningRange) {
-            tuningLowerLimitScan = (currentFrequency * 1000) - (tuningRange * 1000);
-            tuningUpperLimitScan = (currentFrequency * 1000) + (tuningRange * 1000);
-        }
-
-        if (tuningUpperLimitScan > (tuningUpperLimit * 1000)) tuningUpperLimitScan = (tuningUpperLimit * 1000);
-        if (tuningLowerLimitScan < (tuningLowerLimit * 1000)) tuningLowerLimitScan = (tuningLowerLimit * 1000);
-
-        // Handle frequency limitations
-        if (tuningLowerLimitScan < 0.144) tuningLowerLimitScan = 0.144;
-        if (tuningLowerLimitScan > 27000 && tuningLowerLimitScan < 64000) tuningLowerLimitScan = 64000;
-        if (tuningLowerLimitScan < 64000) tuningLowerLimitScan = 64000; // Doesn't like scanning HF frequencies
-
-        // Keep tuning range consistent for restricted tuning range setting
-        if (tuningRange) {
-            tuningLowerLimitOffset = (tuningRange * 1000) - (tuningUpperLimitScan - (currentFrequency * 1000));
-            tuningUpperLimitOffset = (tuningLowerLimitScan - (currentFrequency * 1000)) + (tuningRange * 1000);
-
-            // Stay within restricted tuning range
-            if (tuningLowerLimitScan - tuningLowerLimitOffset < tuningLowerLimitScan) tuningLowerLimitOffset = 0;
-            if (tuningUpperLimitScan + tuningUpperLimitOffset < tuningUpperLimitScan) tuningUpperLimitOffset = 0;
-        } else {
-            tuningLowerLimitOffset = 0;
-            tuningUpperLimitOffset = 0;
-        }
-
-        // Limit scan to either OIRT band (64-86 MHz) or FM band (86-108 MHz)
-        if ((currentFrequency * 1000) < 86000 && tuningUpperLimitScan > 86000) tuningUpperLimitScan = 86000;
-        if ((currentFrequency * 1000) >= 86000 && tuningLowerLimitScan < 86000) tuningLowerLimitScan = 86000;
-
-        // The magic happens here
-        if (currentFrequency >= 64) {
-            sendCommandToClient(`Sa${tuningLowerLimitScan - tuningLowerLimitOffset}`);
-            sendCommandToClient(`Sb${tuningUpperLimitScan + tuningUpperLimitOffset}`);
-            sendCommandToClient(`Sc${tuningStepSize}`);
-            if (isModule) {
-                sendCommandToClient(`Sw${tuningBandwidth * 1000}`);
-            } else {
-                switch (tuningBandwidth) {
-                    case 56: BWradio = 0; break;
-                    case 64: BWradio = 26; break;
-                    case 72: BWradio = 1; break;
-                    case 84: BWradio = 28; break;
-                    case 97: BWradio = 29; break;
-                    case 114: BWradio = 3; break;
-                    case 133: BWradio = 4; break;
-                    case 151: BWradio = 5; break;
-                    case 168: BWradio = 7; break;
-                    case 184: BWradio = 8; break;
-                    case 200: BWradio = 9; break;
-                    case 217: BWradio = 10; break;
-                    case 236: BWradio = 11; break;
-                    case 254: BWradio = 12; break;
-                    case 287: BWradio = 13; break;
-                    case 311: BWradio = 15; break;
-                    default: BWradio = 0; break;
-                }
-                sendCommandToClient(`Sf${BWradio}`);
+        const response = await fetch(apiPath, {
+            method: 'GET',
+            headers: {
+                'X-Plugin-Name': 'SpectrumGraphPlugin'
             }
-            sendCommandToClient('S');
+        });
+
+        if (!response.ok) {
+            throw new Error(`Spectrum Graph failed to fetch data: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // Switch to data of current antenna
+        if (data.ad && data.sd && (data.sd0 || data.sd1)) data.sd = data[`sd${data.ad}`];
+
+        // Check if `sd` exists
+        if (data.sd && data.sd.trim() !== '') {
+            console.log(`Spectrum Graph data found for antenna ${data.ad} on page load.`);
+            if (data.sd.length > 0) {
+
+                // Remove trailing comma and space in TEF radio firmware
+                if (data.sd && data.sd.endsWith(', ')) {
+                    data.sd = data.sd.slice(0, -2);
+                }
+
+                // Split the response into pairs and process each one (as it normally does server-side)
+                sigArray = data.sd.split(',').map(pair => {
+                    const [freq, sig] = pair.split('=');
+                    return { freq: (freq / 1000).toFixed(2), sig: parseFloat(sig).toFixed(1) };
+                });
+            }
 
             if (debug) {
-                console.log(`Sa${tuningLowerLimitScan - tuningLowerLimitOffset}`);
-                console.log(`Sb${tuningUpperLimitScan + tuningUpperLimitOffset}`);
-                console.log(`Sc${tuningStepSize}`);
-                console.log(isModule ? `Sw${tuningBandwidth * 1000}` : `Sf${BWradio}`);
-                console.log('S');
+                if (Array.isArray(sigArray)) {
+                    // Process sigArray
+                    sigArray.forEach(item => {
+                        console.log(`freq: ${item.freq}, sig: ${item.sig}`);
+                    });
+                } else {
+                    console.error('Expected array for sigArray, but received:', sigArray);
+                }
             }
         } else {
-            isScanHalted(true);
-            logWarn('Spectrum Graph: Hardware is not capable of scanning below 64 MHz.');
+            console.log('Spectrum Graph found no data available at page load.');
+        }
+    } catch (error) {
+        console.error('Spectrum Graph error during graph initialisation:', error);
+    }
+}
+
+// Call function on page load
+window.addEventListener('load', initializeGraph);
+
+
+// Display signal canvas (default)
+function displaySignalCanvas() {
+    const sdrCanvas = document.getElementById('sdr-graph');
+    if (sdrCanvas) {
+        sdrCanvas.style.display = 'none';
+        isGraphOpen = false;
+    }
+    const sdrCanvasScanButton = document.getElementById('spectrum-scan-button');
+    if (sdrCanvasScanButton) {
+        sdrCanvasScanButton.style.display = 'none';
+    }
+    const sdrCanvasSmoothingButton = document.getElementById('smoothing-on-off-button');
+    if (sdrCanvasSmoothingButton) {
+        sdrCanvasSmoothingButton.style.display = 'none';
+    }
+    const sdrCanvasFixedDynamicButton = document.getElementById('fixed-dynamic-on-off-button');
+    if (sdrCanvasFixedDynamicButton) {
+        sdrCanvasFixedDynamicButton.style.display = 'none';
+    }
+    const sdrCanvasAutoBaselineButton = document.getElementById('auto-baseline-on-off-button');
+    if (sdrCanvasAutoBaselineButton) {
+        sdrCanvasAutoBaselineButton.style.display = 'none';
+    }
+    const sdrCanvasUpdateText = document.querySelector('.spectrum-graph-update-text');
+    if (sdrCanvasUpdateText) {
+        sdrCanvasUpdateText.remove();
+    }
+
+    const loggingCanvas = document.getElementById('logging-canvas');
+    if (loggingCanvas) {
+        loggingCanvas.style.display = 'none';
+    }
+    const ContainerRotator = document.getElementById('containerRotator');
+    if (ContainerRotator) {
+        ContainerRotator.style.display = 'block';
+    }
+    const ContainerAntenna = document.getElementById('Antenna');
+    if (ContainerAntenna) {
+        ContainerAntenna.style.display = 'block';
+    }
+    const signalCanvas = document.getElementById('signal-canvas');
+    if (signalCanvas) {
+        signalCanvas.style.display = 'block';
+    }
+}
+
+// Display SDR graph output
+function displaySdrGraph() {
+    const sdrCanvas = document.getElementById('sdr-graph');
+    if (sdrCanvas) {
+        sdrCanvas.style.display = 'block';
+        isGraphOpen = true;
+        if (!borderlessTheme) canvas.style.border = "1px solid var(--color-3)";
+        setTimeout(drawGraph, drawGraphDelay);
+        const signalCanvas = document.getElementById('signal-canvas');
+        if (signalCanvas) {
+            signalCanvas.style.display = 'none';
+        }
+    }
+    const loggingCanvas = document.getElementById('logging-canvas');
+    if (loggingCanvas) {
+        loggingCanvas.style.display = 'none';
+    }
+    const loggingCanvasButtons = document.querySelector('.download-buttons-container');
+    if (loggingCanvasButtons) {
+        loggingCanvasButtons.style.display = 'none';
+    }
+    const ContainerRotator = document.getElementById('containerRotator');
+    if (ContainerRotator) {
+        ContainerRotator.style.display = 'none';
+    }
+    const ContainerAntenna = document.getElementById('Antenna');
+    if (ContainerAntenna) {
+        ContainerAntenna.style.display = 'none';
+    }
+    ScanButton();
+}
+
+
+// Adjust dataCanvas height based on window height
+function adjustSdrGraphCanvasHeight() {
+    if (/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) && window.matchMedia("(orientation: portrait)").matches) {
+        displaySignalCanvas(); // Ensure it doesn't appear in portrait mode
+    } else {
+        if (window.innerHeight < 860 && window.innerWidth > 480) {
+            canvas.height = canvasHeightSmall;
+        } else {
+            canvas.height = canvasHeightLarge;
+        }
+        drawGraph();
+    }
+}
+
+
+// Toggle spectrum state and update UI accordingly
+function toggleSpectrum() {
+    // Do not proceed to open canvas if signal canvas is hidden
+    if (!document.querySelector("#signal-canvas")?.offsetParent && !isSpectrumOn) return;
+
+    signalText = localStorage.getItem('signalUnit');
+
+    const SpectrumButton = document.getElementById('spectrum-graph-button');
+    const ButtonsContainer = document.querySelector('.download-buttons-container');
+    const antennaImage = document.querySelector('#antenna'); // Ensure ID 'antenna' is correct
+    isSpectrumOn = !isSpectrumOn;
+
+    const loggingCanvas = document.getElementById('logging-canvas');
+    if (loggingCanvas) {
+        loggingCanvas.style.display = 'none';
+    }
+
+    if (isSpectrumOn) {
+        // Update button appearance
+        SpectrumButton.classList.remove('bg-color-2');
+        SpectrumButton.classList.add('bg-color-4');
+
+        // Perform when spectrum is on
+        displaySdrGraph();
+
+        // Hide antenna image
+        if (antennaImage) {
+            antennaImage.style.visibility = 'hidden';
+        }
+
+        // Set initial height with delay
+        setTimeout(adjustSdrGraphCanvasHeight, 400);
+    } else {
+        // Update button appearance
+        SpectrumButton.classList.remove('bg-color-4');
+        SpectrumButton.classList.add('bg-color-2');
+
+        // Perform when spectrum is off
+        displaySignalCanvas();
+
+        // Hide download buttons
+        if (ButtonsContainer) {
+            ButtonsContainer.style.display = 'none';
+        }
+
+        // Show antenna image
+        if (antennaImage) {
+            antennaImage.style.visibility = 'visible';
+        }
+    }
+    signalUnits();
+}
+
+// Observe any frequency changes
+function observeFrequency() {
+    if (dataFrequencyElement) {
+        // Create MutationObserver
+        const observer = new MutationObserver((mutationsList, observer) => {
+            // Loop through mutations that were triggered
+            for (const mutation of mutationsList) {
+                if (mutation.type === 'childList') {
+                    const dataFrequencyValue = dataFrequencyElement.textContent;
+                    if (isGraphOpen) setTimeout(drawGraph, drawGraphDelay);
+                }
+            }
+        });
+
+        const config = { childList: true, subtree: true };
+
+        observer.observe(dataFrequencyElement, config);
+    } else {
+        console.log('Spectrum Graph: #data-frequency missing');
+    }
+}
+observeFrequency();
+
+// Tooltip and frequency highlighter
+function initializeCanvasInteractions() {
+    const canvas = document.getElementById('sdr-graph');
+    const canvasContainer = document.querySelector('.canvas-container');
+    const tooltip = document.createElement('div');
+
+    const colorBackground = getComputedStyle(document.documentElement).getPropertyValue('--color-1-transparent').trim();
+
+    // Style tooltip
+    tooltip.style.position = 'absolute';
+    tooltip.style.background = 'var(--color-3-transparent)';
+    tooltip.style.color = 'var(--color-main-2)';
+    tooltip.style.padding = '5px';
+    tooltip.style.borderRadius = '8px';
+    tooltip.style.fontSize = '12px';
+    tooltip.style.pointerEvents = 'none';
+    tooltip.style.visibility = 'hidden';
+    tooltip.style.zIndex = '20';
+
+    // Append tooltip inside the canvas-container
+    canvasContainer.appendChild(tooltip);
+
+    // Scaling factors and bounds
+    let xScale, minFreq, freqRange, yScale;
+
+    function updateTooltip(event) {
+        // Ready to draw circle
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawGraph();
+
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = event.clientX - rect.left;
+        const mouseY = event.clientY - rect.top;
+
+        // Calculate frequency
+        const freq = minFreq + (mouseX - xOffset) / xScale;
+
+        if (freq < minFreq || freq > minFreq + freqRange) {
+            tooltip.style.visibility = 'hidden';
             return;
         }
-    }
-    logInfo(`Spectrum Graph: Spectral commands sent (${ipAddress})`);
 
-    // Reset data before receiving new data
-    interceptedUData = null;
-    interceptedZData = null;
-    sigArray = [];
-
-    // Wait for U value using async
-    async function waitForUValue(timeout = 10000, interval = 10) {
-        const waitStartTime = Date.now(); // Start of waiting period
-
-        while (Date.now() - waitStartTime < timeout) {
-            if (interceptedUData !== null && interceptedUData !== undefined) {
-                return interceptedUData; // Return when data is fetched
+        // Find closest point in sigArray to the frequency under the cursor
+        let closestPoint = null;
+        let minDistance = Infinity;
+        for (let point of sigArray) {
+            const distance = Math.abs(point.freq - freq.toFixed(1));
+            if (distance < minDistance) {
+                minDistance = distance;
+                closestPoint = point;
             }
-
-            await new Promise(resolve => setTimeout(resolve, interval)); // Wait for next check
         }
 
-        throw new Error(`Spectrum Graph timed out`); // Throw error if timed out
+        if (closestPoint) {
+            const signalValue = Number(closestPoint.sig);
+
+            // Calculate tooltip content
+            const freqText = `${freq.toFixed(1)} MHz`;
+            const signalText = `, ${signalValue.toFixed(0) - sigOffset} ${sigDesc}`;
+
+            // Style HTML
+            tooltip.innerHTML = `
+                <span style="font-weight: 600;">${freqText}</span>
+                <span style="font-weight: 400;">${signalText}</span>
+            `;
+
+            // Calculate position of circle
+            const adjustedSignalValue = signalValue - minSig;
+            const circleX = xOffset + (closestPoint.freq - minFreq) * xScale;
+            const circleY = canvas.height - (adjustedSignalValue * yScale) - 20;
+
+            // Draw circle at tip of the signal
+            ctx.beginPath();
+            ctx.arc(circleX, circleY, 5, 0, 2 * Math.PI);
+            ctx.fillStyle = 'var(--color-5-transparent)';
+            ctx.fill();
+            ctx.strokeStyle = 'var(--color-main-bright)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Tooltip positioning
+            let tooltipX = (xOffset + 10) + (closestPoint.freq - minFreq) * xScale;
+            const tooltipY = canvas.height - 20 - signalValue * yScale;
+            const tooltipWidth = tooltip.offsetWidth;
+
+            if (tooltipX + tooltipWidth > canvas.width) {
+                tooltipX = mouseX - tooltip.offsetWidth - 10;
+            }
+
+            tooltip.style.left = `${tooltipX}px`;
+            tooltip.style.top = `${tooltipY - 30}px`;
+            tooltip.style.visibility = 'visible';
+        }
     }
 
-    (async () => {
-        try {
-            const scanStartTime = Date.now(); // Start of entire scan process
-            let uValue = await waitForUValue();
+    function handleClick(event) {
+        if (!enableMouseClickToTune) return;
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = event.clientX - rect.left;
 
-            // Possibly interrupted
-            if (uValue && uValue.endsWith(',')) {
-                isScanHalted(true);
-                // uValue.slice or null
-                if (showIncompleteData) {
-                    uValue = uValue.slice(0, -1);
-                } else {
-                    uValue = null;
-                }
+        // Calculate frequency
+        const freq = minFreq + (mouseX - xOffset) / xScale;
+
+        if (freq < minFreq || freq > minFreq + freqRange) return;
+
+        // Send WebSocket command
+        const command = `T${Math.round(freq.toFixed(1) * 1000)}`;
+        console.log(`Spectrum Graph: Sending command "${command}"`);
+        socket.send(command);
+        setTimeout(() => {
+            setTimeout(drawGraph, drawGraphDelay);
+        }, 40);
+    }
+
+    // Function to control frequency via mouse wheel
+    function handleWheelScroll(event) {
+        if (enableMouseScrollWheel) {
+            event.preventDefault(); // Prevent webpage scrolling
+
+            // Normalize deltaY value for cross-browser consistency
+            const delta = event.deltaY || event.detail || -event.wheelDelta;
+
+            if (delta < 0) {
+                // Scroll up
+                tuneUp();
+            } else {
+                // Scroll down
+                tuneDown();
+            }
+        }
+    }
+
+    // Add event listeners
+    let lastTimeThrottled = 0;
+    const throttleDelay = 20; // ms
+
+    function updateTooltipThrottled(event) {
+        const currentTimeThrottled = Date.now();
+        const timeDiffThrottled = currentTimeThrottled - lastTimeThrottled;
+
+        if (timeDiffThrottled >= throttleDelay) {
+            lastTimeThrottled = currentTimeThrottled;
+            updateTooltip(event);
+        }
+    }
+
+    // Use throttled mousemove
+    canvas.addEventListener('mousemove', updateTooltipThrottled);
+    canvas.addEventListener('mouseleave', () => {
+        tooltip.style.visibility = 'hidden';
+        setTimeout(() => {
+            drawGraph();
+        }, 800);
+    });
+    canvas.addEventListener('wheel', handleWheelScroll);
+    canvas.addEventListener('click', handleClick);
+
+    // Called after graph is drawn
+    return function updateBounds(newXScale, newMinFreq, newFreqRange, newYScale) {
+        xScale = newXScale;
+        minFreq = newMinFreq;
+        freqRange = newFreqRange;
+        yScale = newYScale;
+    };
+}
+
+// Select container where canvas should be added
+const container = document.querySelector('.canvas-container');
+
+// Create a new canvas element
+const canvas = document.createElement('canvas');
+
+// Set canvas attributes
+canvas.id = 'sdr-graph';
+canvas.position = 'relative';
+
+function resizeCanvas() {
+    let fixedWidth = 1170;
+    let paddingWidth = 10;
+    if (window.innerWidth < fixedWidth + paddingWidth) canvas.width = window.innerWidth - paddingWidth; else canvas.width = fixedWidth;
+    adjustSdrGraphCanvasHeight();
+}
+resizeCanvas();
+
+window.addEventListener("resize", resizeCanvas);
+
+if (window.innerHeight < 860 && window.innerWidth > 480) {
+    canvas.height = canvasHeightSmall;
+} else {
+    canvas.height = canvasHeightLarge;
+}
+
+// Append the canvas to the container
+container.appendChild(canvas);
+
+// Get background colour
+function getBackgroundColor(element) {
+    return window.getComputedStyle(element).backgroundColor;
+}
+const wrapperOuter = document.getElementById('wrapper-outer');
+
+$(window).on('load', function() {
+    setTimeout(() => {
+        let currentBackgroundColor = getBackgroundColor(wrapperOuter);
+        const observer = new MutationObserver(() => {
+            const newColor = getBackgroundColor(wrapperOuter);
+            if (newColor !== currentBackgroundColor) {
                 setTimeout(() => {
-                    // Update endpoint
-                    const newData = { sd: uValue }; // uValue or null
-                    updateSpectrumData(newData);
-                    logWarn(`Spectrum Graph: Spectrum scan appears incomplete.`);
-                }, 200);
+                    console.log(`Spectrum Graph new background colour.`);
+                    setTimeout(drawGraph, drawGraphDelay);
+                }, 400);
             }
-            if (debug) console.log(uValue);
+        });
+        const config = { attributes: true };
+        observer.observe(wrapperOuter, config);
+    }, 1000);
+});
 
-            const completeTime = ((Date.now() - scanStartTime) / 1000).toFixed(1); // Calculate total time
-            logInfo(`Spectrum Graph: Spectrum scan (${(tuningLowerLimitScan / 1000)}-${(tuningUpperLimitScan / 1000)} MHz) ${antennaResponse.enabled ? `for Ant. ${antennaCurrent} ` : ''}complete in ${completeTime} seconds.`);
+// Draw graph
+function drawGraph() {
+    dataFrequencyValue = dataFrequencyElement.textContent;
 
-            if (!isFirstRun) lastRestartTime = Date.now();
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
 
-            // Split response into pairs and process each one
-            sigArray = uValue.split(',').map(pair => {
-                const [freq, sig] = pair.split('=');
-                return { freq: (freq / 1000).toFixed(2), sig: parseFloat(sig).toFixed(1) };
-            });
+    // Clear canvas
+    ctx.clearRect(0, 0, width, height);
 
-            // if (debug) console.log(sigArray);
-
-            const messageClient = JSON.stringify({
-                type: 'sigArray',
-                value: sigArray,
-            });
-            extraSocket.send(messageClient);
-        } catch (error) {
-            logError(`Spectrum Graph scan incomplete, invalid 'U' value, error:`, error.message);
-        }
-        isScanHalted(true);
-    })();
-}
-
-function isScanHalted(status) {
-    if (status) {
-        isScanRunning = false;
-    } else {
-        isScanRunning = true;
-    }
-}
-
-function restartScan(command) {
-    nowTime = Date.now();
-
-    if (!isFirstRun && nowTime - lastRestartTime < (rescanDelay * 1000)) {
-        logInfo(`Spectrum Graph in cooldown mode, can retry in ${(((rescanDelay * 1000) - (nowTime - lastRestartTime)) / 1000).toFixed(1)} seconds (${ipAddress})`);
+    // Check if sigArray has data
+    if (!sigArray || sigArray.length === 0) {
+        //console.error("sigArray is empty or not defined");
         return;
     }
 
-    lastRestartTime = nowTime;
+    // Determine min signal value dynamically
+    if (localStorageItem.isAutoBaseline) {
+        minSig = Math.max(Math.min(...sigArray.map(d => d.sig)) - dynamicPadding, -1); // Dynamic vertical graph
+    } else {
+        minSig = 0; // Fixed min vertical graph
+    }
 
-    // Restart scan
-    if (!isScanRunning) setTimeout(() => startScan(command), 20);
+    // Determine max signal value dynamically
+    if (!localStorageItem.fixedVerticalGraph) {
+        maxSig = (Math.max(...sigArray.map(d => d.sig)) - minSig) + dynamicPadding || 0.01; // Dynamic vertical graph
+    } else {
+        maxSig = 80 - minSig; // Fixed max vertical graph
+    }
+
+    const minFreq = Math.min(...sigArray.map(d => d.freq)) || 88;
+    const maxFreq = Math.max(...sigArray.map(d => d.freq)) || 108;
+
+    if (maxFreq - minFreq <= 12) isDecimalMarkerRoundOff = false;
+
+    // Determine frequency step dynamically
+    const freqRange = (maxFreq - minFreq).toFixed(2);
+    const approxSpacing = width / freqRange; // Approx spacing per frequency
+    let freqStep;
+    if (approxSpacing < 20) {
+        freqStep = 5;
+    } else if (approxSpacing < 40) {
+        freqStep = 2;
+    } else if (approxSpacing < 64) {
+        freqStep = 1;
+    } else if (approxSpacing < 80) {
+        freqStep = 0.5;
+    } else if (approxSpacing < 160) {
+        if (isDecimalMarkerRoundOff) {
+            freqStep = 0.5;
+        } else {
+            freqStep = 0.4;
+        }
+    } else if (approxSpacing < 320) {
+        if (isDecimalMarkerRoundOff) {
+            freqStep = 0.5;
+        } else {
+            freqStep = 0.2;
+        }
+    } else {
+        freqStep = 0.1;
+    }
+
+    // Scaling factors
+    const xScale = (width - xOffset) / freqRange;
+    const yScale = (height - 30) / maxSig;
+
+    const colorText = getComputedStyle(document.documentElement).getPropertyValue('--color-5').trim();
+    const colorBackground = getComputedStyle(document.documentElement).getPropertyValue('--color-1-transparent').trim();
+
+    // Draw background
+    if (!borderlessTheme) {
+        ctx.fillStyle = colorBackground; // Background
+        ctx.fillRect(0, 0, width, height);
+    }
+
+    // Reset line style for grid lines and graph
+    ctx.setLineDash([]);
+
+    // Draw frequency labels and tick marks
+    if (borderlessTheme) {
+        ctx.fillStyle = colorText;
+        ctx.font = `12px Titillium Web, Helvetica, Calibri, Arial, Monospace, sans-serif`;
+    } else {
+        ctx.fillStyle = '#f0f0fe';
+        ctx.font = `12px Helvetica, Calibri, Arial, Monospace, sans-serif`;
+    }
+    ctx.strokeStyle = '#ccc';
+
+    // Round minFreq if setting is enabled
+    let minFreqRounded = minFreq;
+    minFreqRounded = isDecimalMarkerRoundOff ? Math.ceil(minFreqRounded) : minFreqRounded;
+
+    for (let freq = minFreqRounded; freq <= maxFreq; freq += freqStep) {
+        const x = xOffset + (freq - minFreq) * xScale;
+        if (freq !== minFreq && freq !== maxFreq) ctx.fillText(freq.toFixed(1), x - 10, height - 5);
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([]);
+
+        for (let freq = minFreqRounded; freq <= maxFreq; freq += freqStep) {
+            const x = xOffset + (freq - minFreq) * xScale;
+
+            // Draw tick mark only if it's not the first or last frequency
+            if (freq !== minFreq && freq !== maxFreq) {
+                ctx.beginPath();
+                ctx.moveTo(x, height - 20); // Start at x-axis
+                ctx.lineTo(x, height - 18); // Extend slightly upwards
+                ctx.stroke();
+            }
+        }
+    }
+
+    // Draw signal labels
+    let sigLabelStep;
+    if (canvas.height === canvasHeightLarge) {
+        sigLabelStep = maxSig / 8; // Increase the number of labels
+    } else {
+        sigLabelStep = maxSig / 4;
+    }
+    let labels = [];
+    for (let sig = 0; sig <= maxSig; sig += sigLabelStep) {
+        const y = height - 20.5 - sig * yScale;
+        if (signalText === 'dbm') {
+            // dBm spacing
+            let tempDbfSig = ((sig - sigOffset) + minSig).toFixed(0);
+            // dBm
+            if (sig && tempDbfSig > -100) ctx.fillText(tempDbfSig, ((xOffset - xSigOffset) + 8), y + 3);
+            if (sig && tempDbfSig <= -100) ctx.fillText(tempDbfSig, ((xOffset - xSigOffset)) + 1.5, y + 3);
+        } else if (signalText === 'dbuv') {
+            // dBuV number spacing
+            let tempDbuvSig = (((sig - sigOffset) + 1) + minSig).toFixed(0);
+            if (tempDbuvSig == -0) tempDbuvSig = 0;
+            // dBuV using +1 for even numbering
+            if (sig && tempDbuvSig >= 10) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset), y + 3);
+            if (sig && tempDbuvSig > 0 && tempDbuvSig < 10) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset) + 6.5, y + 3);
+            if (sig && tempDbuvSig == 0) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset) + 5.5, y + 3);
+            if (sig && tempDbuvSig < 0 && tempDbuvSig > -10) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset) + 1.5, y + 3);
+            if (sig && tempDbuvSig <= -10) ctx.fillText(tempDbuvSig, (xOffset - xSigOffset) - 5.5, y + 3);
+        } else if (signalText === 'dbf') {
+            let tempDbfSig = ((sig - sigOffset) + minSig).toFixed(0);
+            // dBf
+            if (tempDbfSig == -0) tempDbfSig = 0;
+            if (sig && tempDbfSig >= 10) ctx.fillText(tempDbfSig, (xOffset - xSigOffset), y + 3);
+            if (sig && tempDbfSig > 0 && tempDbfSig < 10) ctx.fillText(tempDbfSig, (xOffset - xSigOffset) + 6.5, y + 3);
+            if (sig && tempDbfSig == 0) ctx.fillText(tempDbfSig, (xOffset - xSigOffset) + 5.5, y + 3);
+            if (sig && tempDbfSig < 0) ctx.fillText(tempDbfSig, (xOffset - xSigOffset) + 1.5, y + 3);
+        }
+        labels.push(sig); // Store labeled values
+    }
+
+    // Draw dotted grid lines (horizontal)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([1, 2]); // Dotted lines
+    ctx.beginPath(); // Start a new path for all horizontal lines
+
+    for (let sig of labels) {
+        const y = (height - 20 - sig * yScale) - 1;
+        ctx.moveTo(xOffset, y);
+        ctx.lineTo(width, y);
+    }
+
+    // Draw all lines in one stroke call to prevent overlaps
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+
+    for (let sig = 0; sig <= maxSig; sig += sigLabelStep) {
+        const y = height - 20 - sig * yScale; // Calculate vertical position
+
+        // Draw tick mark only if it's not the first or last value
+        if (sig !== 0) {
+            ctx.beginPath();
+            ctx.moveTo(xOffset - 2, y - 1); // Start just to the left of the axis
+            ctx.lineTo(xOffset, y - 1); // Extend slightly outwards
+            ctx.stroke();
+        }
+    }
+
+    // Fill graph area
+    const gradient = ctx.createLinearGradient(0, height - 20, 0, 0);
+
+    // Add colour stops
+    gradient.addColorStop(0, "#0030E0");
+    gradient.addColorStop(0.25, "#18BB56");
+    gradient.addColorStop(0.5, "#8CD500");
+    gradient.addColorStop(0.75, "#F04100");
+
+    // Set fill style and draw a rectangle
+    ctx.fillStyle = gradient;
+
+    // Draw graph with smoothed points
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(xOffset, height - 20); // Start from bottom-left corner
+
+    // Draw graph line
+    sigArray.forEach((point, index) => {
+        if (point.sig < 0) point.sig = 0;
+        const x = (xOffset + (point.freq - minFreq) * xScale);
+        const y = (height - 20 - (point.sig - minSig) * yScale);
+        if (index === 0) {
+            ctx.lineTo(x, (y - 1));
+        } else {
+            ctx.lineTo(x, (y - 1));
+        }
+    });
+
+    if (localStorageItem.enableSmoothing) {
+        ctx.fillStyle = gradient;
+        ctx.strokeStyle = gradient;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 2; // Smoothing
+        ctx.stroke();
+    }
+
+    // Restore to not affect the rest of the graph
+    ctx.lineCap = 'butt';
+    ctx.lineJoin = 'miter';
+
+    // Return to the x-axis under the last data point
+    const lastPointX = xOffset + (sigArray[sigArray.length - 1].freq - minFreq) * xScale;
+    ctx.lineTo(lastPointX, height - 20);
+
+    ctx.fill();
+
+    // Draw grid lines (vertical)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.lineWidth = 0.5;
+    ctx.setLineDash([1, 2]); // Dotted lines
+
+    // Vertical grid lines (for each frequency step)
+    for (let freq = minFreqRounded; freq.toFixed(2) <= maxFreq; freq += freqStep) {
+        const x = xOffset + (freq - minFreq) * xScale;
+        if (freq !== minFreq) {
+            ctx.beginPath();
+            ctx.moveTo(x, 8);
+            ctx.lineTo(x, height - 20);
+            ctx.stroke();
+        }
+    }
+
+	if (SpectrumLimiterValue !== 100 && SpectrumLimiterValue !== 0 && (ScannerMode === 'spectrum' || ScannerMode === 'difference')) {
+		const yPositionLimiterValue = height - 20 - ((SpectrumLimiterValue + sigOffset - minSig) * yScale);
+
+		// Draw a semi-transparent red area to the top
+		ctx.fillStyle = 'rgba(226, 61, 1, 0.2)';
+		ctx.fillRect(xOffset, 8, width - xOffset, yPositionLimiterValue - 8);
+
+		// Draw a contrasting red line
+		ctx.strokeStyle = 'rgba(226, 61, 1, 0.8)';
+		ctx.lineWidth = 1.5;
+		ctx.beginPath();
+		ctx.moveTo(xOffset, yPositionLimiterValue);
+		ctx.lineTo(width, yPositionLimiterValue);
+		ctx.stroke();
+	
+		// Write the SpectrumLimiterValue below the line
+		ctx.fillStyle = 'rgba(226, 61, 1, 1.0)';
+		ctx.font = '12px Arial';
+		ctx.textAlign = 'left';
+		ctx.fillText(`${SpectrumLimiterValue.toFixed(1)} ${sigDesc}`, xOffset + 5, yPositionLimiterValue + 15);
+	}
+
+	if (Sensitivity !== 0 && Sensitivity !== 100 && ScannerMode !== '') {
+		const yPositionSensitivityValue = height - 20 - ((Sensitivity + sigOffset - minSig) * yScale);
+
+		// Draw a semi-transparent blue area to the bottom
+		ctx.fillStyle = 'rgba(4, 56, 215, 0.2)';
+		ctx.fillRect(xOffset, yPositionSensitivityValue, width - xOffset, height - 20 - yPositionSensitivityValue);
+
+		// Draw a contrasting blue line
+		ctx.strokeStyle = 'rgba(4, 56, 215, 0.8)';
+		ctx.lineWidth = 1.5;
+		ctx.beginPath();
+		ctx.moveTo(xOffset, yPositionSensitivityValue);
+		ctx.lineTo(width, yPositionSensitivityValue);
+		ctx.stroke();
+
+		// Write the Sensitivity value above the line
+		ctx.fillStyle = 'rgba(4, 56, 215, 1.0)';
+		ctx.font = '12px Arial';
+		ctx.textAlign = 'left';
+		ctx.fillText(`${Sensitivity.toFixed(1)} ${sigDesc}`, xOffset + 5, yPositionSensitivityValue - 5);
+	}
+
+    // Draw graph line
+    let leftX, rightX;
+    sigArray.forEach((point, index) => {
+        if (point.sig < 0) point.sig = 0;
+        const x = xOffset + (point.freq - minFreq) * xScale;
+        const y = height - 20 - point.sig * yScale;
+
+        // Draw current frequency line
+        if (Number(dataFrequencyValue).toFixed(1) == Number(point.freq).toFixed(1)) {
+            // Calculate the x-coordinates for the white vertical line
+            let highlightBandwidthLow = 0.1;
+            let highlightBandwidthHigh = 0.1;
+            const highlightFreq = Number(dataFrequencyValue);
+            if (highlightFreq === minFreq) highlightBandwidthLow = 0.0;
+            if (highlightFreq === minFreq) highlightBandwidthHigh = 0.1;
+            leftX = xOffset + (highlightFreq - highlightBandwidthLow - minFreq) * xScale; // 0.1 MHz to the left
+            rightX = xOffset + (highlightFreq + highlightBandwidthHigh - minFreq) * xScale; // 0.1 MHz to the right
+        }
+    });
+
+    // Set style for white line
+    ctx.fillStyle = 'rgba(224, 224, 240, 0.3)';
+
+    // Draw vertical highlight region
+    ctx.fillRect(leftX, 8, rightX - leftX, height - 28); // From top to bottom of graph
+
+    const colorLines = getComputedStyle(document.documentElement).getPropertyValue('--color-5').trim();
+
+    ctx.setLineDash([]);
+    if (borderlessTheme) {
+        ctx.strokeStyle = colorLines;
+    } else {
+        ctx.strokeStyle = '#98989f';
+    }
+    ctx.lineWidth = 1.5;
+
+    ctx.beginPath();
+    ctx.moveTo((xOffset - 0.5), height - 19.5); // X-axis
+    ctx.lineTo(width + 0.5, height - 19.5);
+    ctx.moveTo((xOffset - 0.5), 8.5); // Y-axis
+    ctx.lineTo((xOffset - 0.5), height - 19.5);
+    ctx.stroke();
+
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+    canvas.addEventListener('mousedown', e => (e.button === 1) && e.preventDefault());
+
+    return updateBounds(xScale, minFreq, freqRange, yScale);
 }
+const updateBounds = initializeCanvasInteractions();
+
+})();
