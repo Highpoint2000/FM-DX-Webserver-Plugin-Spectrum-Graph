@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.1.7 by AAD
+    Spectrum Graph v1.1.8a by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 */
 
@@ -17,9 +17,10 @@ const useButtonSpacingBetweenCanvas = true;     // Other plugins are likely to o
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const pluginVersion = '1.1.7';
+const pluginVersion = '1.1.8a';
 
 // const variables
+const pluginName = "Spectrum Graph";
 const debug = false;
 const dataFrequencyElement = document.getElementById('data-frequency');
 const drawGraphDelay = 10;
@@ -45,6 +46,11 @@ let sigOffset, xSigOffset, sigDesc, prevSignalText;
 let removeUpdateTextTimeout;
 let updateText;
 let wsSendSocket;
+
+// let variables (Scanner plugin by Highpoint)
+let ScannerMode = '';
+let ScannerSensitivity = 0;
+let ScannerSpectrumLimiterValue = 0; 
 
 // localStorage variables
 localStorageItem.enableSmoothing = localStorage.getItem('enableSpectrumGraphSmoothing') === 'true';                 // Smooths the graph edges
@@ -106,7 +112,7 @@ function createDefaultButtonWrapper() {
         if (useButtonSpacingBetweenCanvas) wrapperElement.append(document.createElement('br'));
         return buttonWrapper;
     } else {
-        console.error('Spectrum Graph: Standard button location not found. Unable to add button.');
+        console.error(`${pluginName}: Standard button location not found. Unable to add button.`);
         return null;
     }
 }
@@ -133,19 +139,19 @@ async function setupSendSocket() {
         try {
             wsSendSocket = new WebSocket(WEBSOCKET_URL);
             wsSendSocket.onopen = () => {
-                console.log(`Spectrum Graph connected WebSocket`);
+                console.log(`${pluginName} connected WebSocket`);
 
                 wsSendSocket.onmessage = function(event) {
                     // Parse incoming JSON data
                     const data = JSON.parse(event.data);
 
                     if (data.type === 'spectrum-graph') {
-                        console.log(`Spectrum Graph command sent`);
+                        console.log(`${pluginName} command sent`);
                     }
 
                     // Handle 'sigArray' data
                     if (data.type === 'sigArray') {
-                        console.log(`Spectrum Graph received sigArray.`);
+                        console.log(`${pluginName} received sigArray.`);
                         sigArray = data.value;
                         if (sigArray.length > 0) {
                             setTimeout(drawGraph, drawGraphDelay);
@@ -161,12 +167,42 @@ async function setupSendSocket() {
                             }
                         }
                     }
+
+                    // Scanner plugin by Highpoint
+                    if (data.type === 'Scanner') {
+                        const eventData = JSON.parse(event.data);
+
+                        if (eventData === '') {
+                            const initialMessage = createMessage('request');
+                            if (wsSendSocket && wsSendSocket.readyState === WebSocket.OPEN) {
+                                wsSendSocket.send(JSON.stringify(initialMessage));
+                            }
+                        }
+
+                        if (eventData.value.Sensitivity !== undefined && eventData.value.Sensitivity !== null) {
+                            const parsedScannerSensitivity = parseFloat(eventData.value.Sensitivity);
+                            if (!isNaN(parsedScannerSensitivity)) {
+                                ScannerSensitivity = parsedScannerSensitivity;
+                            }
+                        }
+
+                        if (eventData.value.SpectrumLimiterValue !== undefined && eventData.value.SpectrumLimiterValue !== null) {
+                            const parsedScannerSpectrumLimiterValue = parseFloat(eventData.value.SpectrumLimiterValue);
+                            if (!isNaN(parsedScannerSpectrumLimiterValue)) {
+                                ScannerSpectrumLimiterValue = parsedScannerSpectrumLimiterValue;
+                            }
+                        }
+
+                        if (eventData.value.ScannerMode !== undefined && eventData.value.ScannerMode !== null && eventData.value.ScannerMode !== '') {
+                            ScannerMode = eventData.value.ScannerMode;
+                        }
+                    } // **
                 };
             };
 
             wsSendSocket.onclose = (event) => {
                 setTimeout(function() {
-                    console.log(`Spectrum Graph: WebSocket closed:`, event);
+                    console.log(`${pluginName}: WebSocket closed:`, event);
                 }, 400);
                 setTimeout(setupSendSocket, 5000); // Reconnect after 5 seconds
             };
@@ -187,7 +223,7 @@ async function fetchFirstLine() {
         try {
             const response = await fetch(urlCheckForUpdate);
             if (!response.ok) {
-                throw new Error(`Spectrum Graph update check HTTP error! status: ${response.status}`);
+                throw new Error(`${pluginName} update check HTTP error! status: ${response.status}`);
             }
 
             const text = await response.text();
@@ -197,7 +233,7 @@ async function fetchFirstLine() {
 
             return version;
         } catch (error) {
-            console.error('Spectrum Graph error fetching file:', error);
+            console.error(`${pluginName} error fetching file:`, error);
             return null;
         }
     }
@@ -208,7 +244,7 @@ fetchFirstLine().then(version => {
     if (checkUpdates && version) {
         if (version !== pluginVersion) {
             updateText = "There is a new version of this plugin available";
-            console.log(`Spectrum Graph: ${updateText}`)
+            console.log(`${pluginName}: ${updateText}`)
         }
     }
 });
@@ -239,7 +275,7 @@ function signalUnits() {
     }
     if (signalText !== prevSignalText) {
         setTimeout(drawGraph, drawGraphDelay);
-        console.log(`Spectrum Graph: Signal unit changed.`);
+        console.log(`${pluginName}: Signal unit changed.`);
     }
     prevSignalText = signalText;
 }
@@ -331,7 +367,7 @@ function ScanButton() {
     ToggleAddButton('smoothing-on-off-button',      'Smooth Graph Edges',       'chart-area',       'enableSmoothing',      'Smoothing',            '56');
     ToggleAddButton('fixed-dynamic-on-off-button',  'Relative/Fixed Scale',     'arrows-up-down',   'fixedVerticalGraph',   'FixedVerticalGraph',   '96');
     ToggleAddButton('auto-baseline-on-off-button',  'Auto Baseline',            'a',                'isAutoBaseline',       'AutoBaseline',         '136');
-    initTooltips();
+    if (typeof initTooltips === 'function') initTooltips();
     if (updateText) insertUpdateText(updateText);
 }
 
@@ -387,10 +423,10 @@ function ToggleAddButton(Id, Tooltip, FontAwesomeIcon, localStorageVariable, loc
                 toggleButton.style.right = `${parseInt(spectrumButton.style.right, 10) + 40}px`; // 40px offset
             }
         } else {
-            console.error('Spectrum Graph: Parent container is not .canvas-container');
+            console.error(`${pluginName}: Parent container is not .canvas-container`);
         }
     } else {
-        console.error('Spectrum Graph: #sdr-graph not found');
+        console.error(`${pluginName}: #sdr-graph not found`);
     }
 
     // Add styles
@@ -458,10 +494,10 @@ function insertUpdateText(updateText) {
             canvasContainer.style.position = 'relative';
             canvasContainer.appendChild(updateTextElement);
         } else {
-            console.error('Spectrum Graph: Parent container is not .canvas-container');
+            console.error(`${pluginName}: Parent container is not .canvas-container`);
         }
     } else {
-        console.error('Spectrum Graph: #sdr-graph not found');
+        console.error(`${pluginName}: #sdr-graph not found`);
     }
 
     function resetUpdateTextTimeout() {
@@ -495,7 +531,7 @@ function checkAdminMode() {
     isTuneAuthenticated = bodyText.includes("You are logged in as an administrator.") || bodyText.includes("You are logged in as an adminstrator.") || bodyText.includes("You are logged in and can control the receiver.");
     if (isTuneAuthenticated || (isTunerLocked && isTuneAuthenticated) || (!isTunerLocked && !isTuneAuthenticated)) isTuningAllowed = true;
     if (isTuneAuthenticated) {
-        console.log(`Spectrum Graph: Logged in as administrator`);
+        console.log(`${pluginName}: Logged in as administrator`);
     }
 }
 
@@ -514,7 +550,7 @@ async function initializeGraph() {
         });
 
         if (!response.ok) {
-            throw new Error(`Spectrum Graph failed to fetch data: ${response.status}`);
+            throw new Error(`${pluginName} failed to fetch data: ${response.status}`);
         }
 
         const data = await response.json();
@@ -524,7 +560,7 @@ async function initializeGraph() {
 
         // Check if `sd` exists
         if (data.sd && data.sd.trim() !== '') {
-            console.log(`Spectrum Graph data found for antenna ${data.ad} on page load.`);
+            console.log(`${pluginName} data found for antenna ${data.ad} on page load.`);
             if (data.sd.length > 0) {
 
                 // Remove trailing comma and space in TEF radio firmware
@@ -550,10 +586,10 @@ async function initializeGraph() {
                 }
             }
         } else {
-            console.log('Spectrum Graph found no data available at page load.');
+            console.log(`${pluginName} found no data available at page load.`);
         }
     } catch (error) {
-        console.error('Spectrum Graph error during graph initialisation:', error);
+        console.error(`${pluginName} error during graph initialisation:`, error);
     }
 }
 
@@ -726,7 +762,7 @@ function observeFrequency() {
 
         observer.observe(dataFrequencyElement, config);
     } else {
-        console.log('Spectrum Graph: #data-frequency missing');
+        console.log(`${pluginName}: #data-frequency missing`);
     }
 }
 observeFrequency();
@@ -839,7 +875,7 @@ function initializeCanvasInteractions() {
 
         // Send WebSocket command
         const command = `T${Math.round(freq.toFixed(1) * 1000)}`;
-        console.log(`Spectrum Graph: Sending command "${command}"`);
+        console.log(`${pluginName}: Sending command "${command}"`);
         socket.send(command);
         setTimeout(() => {
             setTimeout(drawGraph, drawGraphDelay);
@@ -940,7 +976,7 @@ $(window).on('load', function() {
             const newColor = getBackgroundColor(wrapperOuter);
             if (newColor !== currentBackgroundColor) {
                 setTimeout(() => {
-                    console.log(`Spectrum Graph new background colour.`);
+                    console.log(`${pluginName} new background colour.`);
                     setTimeout(drawGraph, drawGraphDelay);
                 }, 400);
             }
@@ -1197,6 +1233,51 @@ function drawGraph() {
             ctx.stroke();
         }
     }
+
+    // Scanner plugin by Highpoint
+    if (ScannerSpectrumLimiterValue !== 100 && ScannerSpectrumLimiterValue !== 0 && (ScannerMode === 'spectrum' || ScannerMode === 'difference')) {
+        const yPositionLimiterValue = height - 20 - ((ScannerSpectrumLimiterValue - minSig) * yScale);
+
+        // Draw a semi-transparent red area to the top
+        ctx.fillStyle = 'rgba(226, 61, 1, 0.2)';
+        ctx.fillRect(xOffset, 8, width - xOffset, yPositionLimiterValue - 8);
+
+        // Draw a contrasting red line
+        ctx.strokeStyle = 'rgba(226, 61, 1, 0.8)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(xOffset, yPositionLimiterValue);
+        ctx.lineTo(width, yPositionLimiterValue);
+        ctx.stroke();
+
+        // Write the SpectrumLimiterValue below the line
+        ctx.fillStyle = 'rgba(226, 61, 1, 1.0)';
+        ctx.font = '12px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${Number(ScannerSpectrumLimiterValue.toFixed(1)) - sigOffset} ${sigDesc}`, xOffset + 5, yPositionLimiterValue + 15);
+    }
+
+    if (ScannerSensitivity !== 0 && ScannerSensitivity !== 100 && ScannerMode !== '') {
+        const yPositionScannerSensitivityValue = height - 20 - ((ScannerSensitivity - minSig) * yScale);
+
+        // Draw a semi-transparent blue area to the bottom
+        ctx.fillStyle = 'rgba(4, 56, 215, 0.2)';
+        ctx.fillRect(xOffset, yPositionScannerSensitivityValue, width - xOffset, height - 20 - yPositionScannerSensitivityValue);
+
+        // Draw a contrasting blue line
+        ctx.strokeStyle = 'rgba(4, 56, 215, 0.8)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(xOffset, yPositionScannerSensitivityValue);
+        ctx.lineTo(width, yPositionScannerSensitivityValue);
+        ctx.stroke();
+
+        // Write the Sensitivity value above the line
+        ctx.fillStyle = 'rgba(4, 56, 215, 1.0)';
+        ctx.font = '12px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${Number(ScannerSensitivity.toFixed(1)) - sigOffset} ${sigDesc}`, xOffset + 5, yPositionScannerSensitivityValue - 5);
+    } // **
 
     // Draw graph line
     let leftX, rightX;

@@ -1,5 +1,5 @@
 /*
-    Spectrum Graph v1.1.7 by AAD
+    Spectrum Graph v1.1.8a by AAD
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Spectrum-Graph
 
     //// Server-side code ////
@@ -64,7 +64,7 @@ function customRouter() {
         }
     });
 
-    logInfo('Spectrum Graph: Custom router added to endpoints router.');
+    logInfo(`${pluginName}: Custom router added to endpoints router.`);
 }
 
 // Update endpoint
@@ -218,12 +218,12 @@ async function TextWebSocket(messageData) {
 
                             textSocketLost = setTimeout(() => {
                                 // WebSocket reconnection required after serialport connection loss
-                                logInfo(`Spectrum Graph connection lost, creating new WebSocket.`);
+                                logInfo(`${pluginName} connection lost, creating new WebSocket.`);
                                 if (textSocket) {
                                     try {
                                         textSocket.close(1000, 'Normal closure');
                                     } catch (error) {
-                                        logInfo(`Spectrum Graph error closing WebSocket:`, error);
+                                        logInfo(`${pluginName} error closing WebSocket:`, error);
                                     }
                                 }
                                 textSocketLost = null;
@@ -231,20 +231,20 @@ async function TextWebSocket(messageData) {
                         }
 
                     } catch (error) {
-                        logError(`Spectrum Graph failed to parse WebSocket message:`, error);
+                        logError(`${pluginName} failed to parse WebSocket message:`, error);
                     }
                 };
             };
 
-            textSocket.onerror = (error) => logError(`Spectrum Graph WebSocket error:`, error);
+            textSocket.onerror = (error) => logError(`${pluginName} WebSocket error:`, error);
 
             textSocket.onclose = () => {
-                logInfo(`Spectrum Graph closed WebSocket`);
+                logInfo(`${pluginName} closed WebSocket`);
                 setTimeout(() => TextWebSocket(messageData), 2000); // Pass messageData when reconnecting
             };
 
         } catch (error) {
-            logError(`Spectrum Graph failed to set up WebSocket:`, error);
+            logError(`${pluginName} failed to set up WebSocket:`, error);
             setTimeout(() => TextWebSocket(messageData), 2000); // Pass messageData when reconnecting
         }
     }
@@ -261,11 +261,11 @@ async function ExtraWebSocket() {
             };
 
             extraSocket.onerror = (error) => {
-                logError(`Spectrum Graph: WebSocket error:`, error);
+                logError(`${pluginName}: WebSocket error:`, error);
             };
 
             extraSocket.onclose = () => {
-                logInfo(`Spectrum Graph WebSocket closed.`);
+                logInfo(`${pluginName} WebSocket closed.`);
                 setTimeout(ExtraWebSocket, 2000); // Reconnect after delay
             };
 
@@ -282,7 +282,7 @@ async function ExtraWebSocket() {
                         if (message.type === 'spectrum-graph' && message.value?.status === 'scan') {
                             if (!isFirstRun && !isScanRunning) restartScan('scan');
                         } else if (!message.value?.status === 'scan') {
-                            logError(`Spectrum Graph unknown command received:`, message);
+                            logError(`${pluginName} unknown command received:`, message);
                         }
                         messageParsedTimeout = true;
 
@@ -297,11 +297,11 @@ async function ExtraWebSocket() {
                         }, 150); // Reduce spamming
                     }
                 } catch (error) {
-                    logError(`Spectrum Graph: Failed to handle message:`, error);
+                    logError(`${pluginName}: Failed to handle message:`, error);
                 }
             };
         } catch (error) {
-            logError(`Spectrum Graph: Failed to set up WebSocket:`, error);
+            logError(`${pluginName}: Failed to set up WebSocket:`, error);
             setTimeout(ExtraWebSocket, 2000); // Reconnect on failure
         }
     }
@@ -377,7 +377,7 @@ datahandlerReceived.handleData = function(wss, receivedData, rdsWss) {
                         // Update endpoint
                         const newData = { [`sd${antennaCurrent}`]: uValue }; // uValue or null
                         updateSpectrumData(newData);
-                        logWarn(`Spectrum Graph: Spectrum scan appears incomplete.`);
+                        logWarn(`${pluginName}: Spectrum scan appears incomplete.`);
                     }, 200);
                 }
 
@@ -394,7 +394,7 @@ datahandlerReceived.handleData = function(wss, receivedData, rdsWss) {
                     });
                     extraSocket.send(messageClient);
                 } else {
-                    logInfo(`Spectrum Graph: Invalid 'uValue' for Ant. ${antennaCurrent}, clearing incomplete data.`);
+                    logInfo(`${pluginName}: Invalid 'uValue' for Ant. ${antennaCurrent}, clearing incomplete data.`);
                 }
                 isScanHalted(true);
             }
@@ -457,7 +457,7 @@ function waitForTextSocket() { // First run begins when default frequency is det
         setTimeout(() => {
             if (!isFrequencyMatched) {
                 clearInterval(intervalId);
-                logError("Spectrum Graph: Default Frequency does not match current frequency, continuing anyway.");
+                logError(`${pluginName}: Default Frequency does not match current frequency, continuing anyway.`);
                 initialDelay = 30000;
                 firstRun();
             }
@@ -482,19 +482,19 @@ function waitForTextSocket() { // First run begins when default frequency is det
 
                     if (Date.now() - startTime >= timeout) {
                         clearInterval(checkFrequency);
-                        reject('Spectrum Graph: Current frequency not found in time');
+                        reject(`${pluginName}: Current frequency not found in time.`);
                     }
                 }, checkInterval);
             });
         }
 
         waitForFrequency()
-            .then(message => logInfo(message))
-            .catch(error => logError(error));
+            .then(message => logInfo(`${pluginName}:`, message))
+            .catch(error => logError(`${pluginName}:`, error));
     }
 
     function firstRun() {
-        logInfo(`Spectrum Graph: TEF668X and WebSocket connected, preparing first run...`);
+        logInfo(`${pluginName}: TEF668X and WebSocket connected, preparing first run...`);
         setTimeout(() => restartScan('scan'), initialDelay); // First run
 
         // Scan additional antennas
@@ -538,16 +538,16 @@ function firstRunComplete(finalTime) {
 
         if (isFirstRun && !isFirstFirmwareNotice) {
             isFirstFirmwareNotice = true;
-            logInfo(`Spectrum Graph: Firmware detected as ${firmwareType}.`);
+            logInfo(`${pluginName}: Firmware detected as ${firmwareType}.`);
         }
 
         isFirstRun = false;
-        logInfo(`Spectrum Graph: Scan button unlocked, first run complete.`);
+        logInfo(`${pluginName}: Scan button unlocked, first run complete.`);
     }, finalTime);
 }
 
 function sendCommand(socket, command) {
-    //logInfo(`Spectrum Graph send command:`, command);
+    //logInfo(`${pluginName} send command:`, command);
     socket.send(command);
 }
 
@@ -557,13 +557,13 @@ async function sendCommandToClient(command) {
         await TextWebSocket();
 
         if (textSocket && textSocket.readyState === WebSocket.OPEN) {
-            //logInfo(`Spectrum Graph: WebSocket connected, sending command`);
+            //logInfo(`${pluginName}: WebSocket connected, sending command`);
             sendCommand(textSocket, command);
         } else {
-            logError(`Spectrum Graph: WebSocket is not open. Unable to send command.`);
+            logError(`${pluginName}: WebSocket is not open. Unable to send command.`);
         }
     } catch (error) {
-        logError(`Spectrum Graph: Failed to send command to client:`, error);
+        logError(`${pluginName}: Failed to send command to client:`, error);
     }
 }
 
@@ -580,7 +580,7 @@ function waitForServer() {
                 parsedData = JSON.parse(event.data);
             } catch (err) {
                 // Handle error
-                logError(`Spectrum Graph failed to parse JSON:`, err);
+                logError(`${pluginName} failed to parse JSON:`, err);
                 return; // Skip further processing if JSON is invalid
             }
 
@@ -591,7 +591,7 @@ function waitForServer() {
         });
     } else {
         if (retryFailed) {
-            logError(`Spectrum Graph: textSocket is not defined.`);
+            logError(`${pluginName}: textSocket is not defined.`);
         }
         retryFailed = true;
         setTimeout(waitForServer, 2000);
@@ -694,11 +694,11 @@ function startScan(command) {
             }
         } else {
             isScanHalted(true);
-            logWarn('Spectrum Graph: Hardware is not capable of scanning below 64 MHz.');
+            logWarn(`${pluginName}: Hardware is not capable of scanning below 64 MHz.`);
             return;
         }
     }
-    logInfo(`Spectrum Graph: Spectral commands sent (${ipAddress})`);
+    logInfo(`${pluginName}: Spectral commands sent (${ipAddress})`);
 
     // Reset data before receiving new data
     interceptedUData = null;
@@ -717,7 +717,7 @@ function startScan(command) {
             await new Promise(resolve => setTimeout(resolve, interval)); // Wait for next check
         }
 
-        throw new Error(`Spectrum Graph timed out`); // Throw error if timed out
+        throw new Error(`${pluginName} timed out`); // Throw error if timed out
     }
 
     (async () => {
@@ -738,13 +738,13 @@ function startScan(command) {
                     // Update endpoint
                     const newData = { sd: uValue }; // uValue or null
                     updateSpectrumData(newData);
-                    logWarn(`Spectrum Graph: Spectrum scan appears incomplete.`);
+                    logWarn(`${pluginName}: Spectrum scan appears incomplete.`);
                 }, 200);
             }
             if (debug) console.log(uValue);
 
             const completeTime = ((Date.now() - scanStartTime) / 1000).toFixed(1); // Calculate total time
-            logInfo(`Spectrum Graph: Spectrum scan (${(tuningLowerLimitScan / 1000)}-${(tuningUpperLimitScan / 1000)} MHz) ${antennaResponse.enabled ? `for Ant. ${antennaCurrent} ` : ''}complete in ${completeTime} seconds.`);
+            logInfo(`${pluginName}: Spectrum scan (${(tuningLowerLimitScan / 1000)}-${(tuningUpperLimitScan / 1000)} MHz) ${antennaResponse.enabled ? `for Ant. ${antennaCurrent} ` : ''}complete in ${completeTime} seconds.`);
 
             if (!isFirstRun) lastRestartTime = Date.now();
 
@@ -762,7 +762,7 @@ function startScan(command) {
             });
             extraSocket.send(messageClient);
         } catch (error) {
-            logError(`Spectrum Graph scan incomplete, invalid 'U' value, error:`, error.message);
+            logError(`${pluginName} scan incomplete, invalid 'U' value, error:`, error.message);
         }
         isScanHalted(true);
     })();
@@ -780,7 +780,7 @@ function restartScan(command) {
     nowTime = Date.now();
 
     if (!isFirstRun && nowTime - lastRestartTime < (rescanDelay * 1000)) {
-        logInfo(`Spectrum Graph in cooldown mode, can retry in ${(((rescanDelay * 1000) - (nowTime - lastRestartTime)) / 1000).toFixed(1)} seconds (${ipAddress})`);
+        logInfo(`${pluginName} in cooldown mode, can retry in ${(((rescanDelay * 1000) - (nowTime - lastRestartTime)) / 1000).toFixed(1)} seconds (${ipAddress})`);
         return;
     }
 
