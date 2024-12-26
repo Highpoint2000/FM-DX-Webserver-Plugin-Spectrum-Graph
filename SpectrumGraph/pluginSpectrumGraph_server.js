@@ -79,17 +79,19 @@ let tuningRange = 0; // MHz
 let tuningStepSize = 100; // kHz
 let tuningBandwidth = 56; // kHz
 let showIncompleteData = false; // Display incomplete data
+let activateAntennaSwitch = true; // Activate spectrum for antenna switching
 
 const defaultConfig = {
     rescanDelay: 3,
     tuningRange: 0,
     tuningStepSize: 100,
     tuningBandwidth: 56,
-    showIncompleteData: false
+    showIncompleteData: false,
+	activateAntennaSwitch: true
 };
 
 // Order of keys in configuration file
-const configKeyOrder = ['rescanDelay', 'tuningRange', 'tuningStepSize', 'tuningBandwidth', 'showIncompleteData'];
+const configKeyOrder = ['rescanDelay', 'tuningRange', 'tuningStepSize', 'tuningBandwidth', 'showIncompleteData', 'activateAntennaSwitch'];
 
 // Function to ensure folder and file exist
 function checkConfigFile() {
@@ -131,6 +133,7 @@ function loadConfigFile(isReloaded) {
             tuningStepSize = !isNaN(Number(config.tuningStepSize)) ? Number(config.tuningStepSize) : defaultConfig.tuningStepSize;
             tuningBandwidth = !isNaN(Number(config.tuningBandwidth)) ? Number(config.tuningBandwidth) : defaultConfig.tuningBandwidth;
             showIncompleteData = typeof config.showIncompleteData === 'boolean' ? config.showIncompleteData : defaultConfig.showIncompleteData;
+			activateAntennaSwitch = typeof config.activateAntennaSwitch === 'boolean' ? config.activateAntennaSwitch : defaultConfig.activateAntennaSwitch;
 
             // Save the updated config if there were any modifications
             if (configModified) {
@@ -343,7 +346,7 @@ datahandlerReceived.handleData = function(wss, receivedData, rdsWss) {
             if (antennaSwitch) {
                 // Update endpoint
                 const newData = { [`sd${antennaCurrent}`]: interceptedUData };
-                updateSpectrumData(newData);
+                // updateSpectrumData(newData);
             }
             break;
         }
@@ -410,7 +413,7 @@ datahandlerReceived.handleData = function(wss, receivedData, rdsWss) {
 let antennaCurrent; // Will remain 'undefined' if antenna switch is disabled
 let antennaSwitch = false;
 let antennaResponse = { enabled: false };
-if (config.antennas) antennaResponse = config.antennas;
+if (config.antennas && activateAntennaSwitch) antennaResponse = config.antennas;
 
 if (antennaResponse.enabled) { // Continue if 'enabled' is true
     antennaSwitch = true;
@@ -494,6 +497,7 @@ function waitForTextSocket() { // First run begins when default frequency is det
     }
 
     function firstRun() {
+		
         logInfo(`${pluginName}: TEF668X and WebSocket connected, preparing first run...`);
         setTimeout(() => restartScan('scan'), initialDelay); // First run
 
