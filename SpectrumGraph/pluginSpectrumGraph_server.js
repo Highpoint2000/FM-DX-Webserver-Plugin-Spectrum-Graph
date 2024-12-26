@@ -346,7 +346,7 @@ datahandlerReceived.handleData = function(wss, receivedData, rdsWss) {
             if (antennaSwitch) {
                 // Update endpoint
                 const newData = { [`sd${antennaCurrent}`]: interceptedUData };
-                // updateSpectrumData(newData);
+                updateSpectrumData(newData);
             }
             break;
         }
