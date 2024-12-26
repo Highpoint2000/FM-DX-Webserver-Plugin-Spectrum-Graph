@@ -47,10 +47,11 @@ let removeUpdateTextTimeout;
 let updateText;
 let wsSendSocket;
 
-// let variables (Scanner plugin by Highpoint)
+// let variables (Scanner plugin code by Highpoint)
 let ScannerMode = '';
 let ScannerSensitivity = 0;
 let ScannerSpectrumLimiterValue = 0; 
+let tempScannerMode = '';
 
 // localStorage variables
 localStorageItem.enableSmoothing = localStorage.getItem('enableSpectrumGraphSmoothing') === 'true';                 // Smooths the graph edges
@@ -168,7 +169,7 @@ async function setupSendSocket() {
                         }
                     }
 
-                    // Scanner plugin by Highpoint
+                    // Scanner plugin code by Highpoint
                     if (data.type === 'Scanner') {
                         const eventData = JSON.parse(event.data);
 
@@ -244,7 +245,7 @@ fetchFirstLine().then(version => {
     if (checkUpdates && version) {
         if (version !== pluginVersion) {
             updateText = "There is a new version of this plugin available";
-            console.log(`${pluginName}: ${updateText}`)
+            console.log(`${pluginName}: ${updateText}`);
         }
     }
 });
@@ -256,7 +257,7 @@ function signalUnits() {
     signalText = localStorage.getItem('signalUnit') || 'dbf';
     switch (signalText) {
         case 'dbuv':
-            sigOffset = 11;
+            sigOffset = 11.25;
             xOffset = 30;
             xSigOffset = 20;
             sigDesc = 'dBµV';
@@ -826,7 +827,7 @@ function initializeCanvasInteractions() {
 
             // Calculate tooltip content
             const freqText = `${freq.toFixed(1)} MHz`;
-            const signalText = `, ${signalValue.toFixed(0) - sigOffset} ${sigDesc}`;
+            const signalText = `, ${Math.round(signalValue.toFixed(2) - sigOffset).toFixed(0)} ${sigDesc}`;
 
             // Style HTML
             tooltip.innerHTML = `
@@ -1234,8 +1235,12 @@ function drawGraph() {
         }
     }
 
-    // Scanner plugin by Highpoint
-    if (ScannerSpectrumLimiterValue !== 100 && ScannerSpectrumLimiterValue !== 0 && (ScannerMode === 'spectrum' || ScannerMode === 'difference')) {
+    // Scanner plugin code by Highpoint
+    if (ScannerSpectrumLimiterValue !== 100 && ScannerSpectrumLimiterValue !== 0 && (ScannerMode === 'spectrum' || ScannerMode === 'spectrumBL' || ScannerMode === 'difference' || ScannerMode === 'differenceBL')) {
+        if (tempScannerMode !== ScannerMode) {
+            tempScannerMode = ScannerMode;
+            console.log(`${pluginName}: Scanner plugin mode changed to '${ScannerMode}'`);
+        }
         const yPositionLimiterValue = height - 20 - ((ScannerSpectrumLimiterValue - minSig) * yScale);
 
         // Draw a semi-transparent red area to the top
@@ -1254,7 +1259,7 @@ function drawGraph() {
         ctx.fillStyle = 'rgba(226, 61, 1, 1.0)';
         ctx.font = '12px Arial';
         ctx.textAlign = 'left';
-        ctx.fillText(`${Number(ScannerSpectrumLimiterValue.toFixed(1)) - sigOffset} ${sigDesc}`, xOffset + 5, yPositionLimiterValue + 15);
+        ctx.fillText(`${Math.round(Number(ScannerSpectrumLimiterValue.toFixed(1)) - sigOffset)} ${sigDesc}`, xOffset + 5, yPositionLimiterValue + 15);
     }
 
     if (ScannerSensitivity !== 0 && ScannerSensitivity !== 100 && ScannerMode !== '') {
@@ -1276,7 +1281,7 @@ function drawGraph() {
         ctx.fillStyle = 'rgba(4, 56, 215, 1.0)';
         ctx.font = '12px Arial';
         ctx.textAlign = 'left';
-        ctx.fillText(`${Number(ScannerSensitivity.toFixed(1)) - sigOffset} ${sigDesc}`, xOffset + 5, yPositionScannerSensitivityValue - 5);
+        ctx.fillText(`${Math.round(Number(ScannerSensitivity.toFixed(1)) - sigOffset)} ${sigDesc}`, xOffset + 5, yPositionScannerSensitivityValue - 5);
     } // **
 
     // Draw graph line
